@@ -10,8 +10,6 @@
 #include <rex/rex_app.h>
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/graphics/flags.h>
-#include <rex/ui/overlay/debug_overlay.h>
-#include <rex/ui/overlay/settings_overlay.h>
 
 #include "cache.h"
 #ifdef _WIN32
@@ -118,11 +116,9 @@ public:
             automation_->StartCapture(graphics->presenter(), user_data_root().parent_path() / "automation" / std::to_string(GetCurrentProcessId()));
         }
 #endif
-        m_DebugOverlayDialog = std::make_unique<rex::ui::DebugOverlayDialog>(drawer);
-        drawer->AddDialog(m_DebugOverlayDialog.get());
-      
-        m_SettingsDialog = std::make_unique<rex::ui::SettingsDialog>(drawer, user_data_root());
-        drawer->AddDialog(m_SettingsDialog.get());
+        // ReXApp owns the settings, console and debug dialogs. Creating them
+        // again also replaces the SDK's key bindings and repeats every draw.
+        (void)drawer;
     }
 
     void OnShutdown() override
@@ -130,15 +126,8 @@ public:
 #ifdef _WIN32
         if (automation_) automation_->StopCapture();
 #endif
-        imgui_drawer()->RemoveDialog(m_SettingsDialog.get());
-        m_SettingsDialog.reset();
-      
-        imgui_drawer()->RemoveDialog(m_DebugOverlayDialog.get());
-        m_DebugOverlayDialog.reset();
     }
 
-    std::unique_ptr<rex::ui::DebugOverlayDialog> m_DebugOverlayDialog{};
-    std::unique_ptr<rex::ui::SettingsDialog> m_SettingsDialog{};
 #ifdef _WIN32
     std::unique_ptr<WindowsTimerResolution> timer_resolution_;
     std::unique_ptr<AutomationSession> automation_;
