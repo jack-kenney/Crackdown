@@ -14,11 +14,18 @@
 #include <rex/ui/overlay/settings_overlay.h>
 
 #include "cache.h"
+#ifdef _WIN32
+#include "automation.h"
+#include <rex/graphics/graphics_system.h>
+#endif
 
 REXCVAR_DEFINE_BOOL(fix_lighting, false, "Game Enhancements", "Fix lighting calculation, currently halves FPS but improves visibility and color/brightness accuracy.");
 REXCVAR_DEFINE_BOOL(fix_light_occlusion, true, "Game Enhancements", "Fix light source coronas being visible through walls.");
 REXCVAR_DEFINE_BOOL(misc_performance_improvements, false, "Game Enhancements", "Disables bloom and shadows to potentially improve performance.");
 REXCVAR_DEFINE_BOOL(show_perfgraph, false, "Game Enhancements", "Show FPS counter in the top right and performance graph in the left half of the screen.");
+#ifdef _WIN32
+REXCVAR_DEFINE_BOOL(automation, false, "Debug", "Enable local automated controller input and guest frame capture for testing.");
+#endif
 
 class CrackdownApp : public rex::ReXApp {
 public:
@@ -31,6 +38,16 @@ public:
             PPC_IMAGE_SIZE, PPCFuncMappings}));
     }
   
+#ifdef _WIN32
+    void OnPreSetup(rex::RuntimeConfig& config) override
+    {
+        if (REXCVAR_GET(automation)) {
+            automation_ = std::make_unique<AutomationSession>();
+            config.input_factory = [this](bool) { return automation_->CreateInputSystem(); };
+        }
+    }
+#endif
+
     void OnPostSetup() override
     {
         if (REXCVAR_GET(fix_lighting))
@@ -84,6 +101,12 @@ public:
 
     void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override
     {
+#ifdef _WIN32
+        if (automation_) {
+            auto* graphics = static_cast<rex::graphics::GraphicsSystem*>(runtime()->graphics_system());
+            automation_->StartCapture(graphics->presenter(), user_data_root().parent_path() / "automation" / std::to_string(GetCurrentProcessId()));
+        }
+#endif
         m_DebugOverlayDialog = std::make_unique<rex::ui::DebugOverlayDialog>(drawer);
         drawer->AddDialog(m_DebugOverlayDialog.get());
       
@@ -93,6 +116,9 @@ public:
 
     void OnShutdown() override
     {
+#ifdef _WIN32
+        if (automation_) automation_->StopCapture();
+#endif
         imgui_drawer()->RemoveDialog(m_SettingsDialog.get());
         m_SettingsDialog.reset();
       
@@ -102,6 +128,9 @@ public:
 
     std::unique_ptr<rex::ui::DebugOverlayDialog> m_DebugOverlayDialog{};
     std::unique_ptr<rex::ui::SettingsDialog> m_SettingsDialog{};
+#ifdef _WIN32
+    std::unique_ptr<AutomationSession> automation_;
+#endif
 };
 
 REX_DEFINE_APP(crackdown, CrackdownApp::Create)

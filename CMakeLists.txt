@@ -43,7 +43,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/sources.cmake")
 endif()
 
 if(WIN32)
+    list(APPEND CRACKDOWN_SOURCES src/automation.cpp)
     add_executable(crackdown WIN32 ${CRACKDOWN_SOURCES})
+    # Keep function names available for release crash dumps without recompiling
+    # the large generated translation units with debug information.
+    target_link_options(crackdown PRIVATE "LINKER:/debug,/map,/opt:ref,/opt:icf")
 else()
     add_executable(crackdown ${CRACKDOWN_SOURCES})
 endif()
@@ -68,6 +72,14 @@ add_dependencies(crackdown crackdown_pack_fix)
 option(CRACKDOWN_BUILD_TESTS "Build Crackdown regression tests" OFF)
 if(CRACKDOWN_BUILD_TESTS)
     enable_testing()
+    if(WIN32)
+        add_executable(crackdown_debugger tools/watch_game.cpp)
+        target_link_libraries(crackdown_debugger PRIVATE dbghelp)
+        add_executable(crackdown_automation_tests tests/automation_tests.cpp src/automation.cpp)
+        target_include_directories(crackdown_automation_tests PRIVATE src)
+        target_link_libraries(crackdown_automation_tests PRIVATE rex::input rex::ui)
+        add_test(NAME automation_controller COMMAND crackdown_automation_tests)
+    endif()
     add_executable(crackdown_cache_tests tests/cache_tests.cpp src/cache.cpp)
     target_include_directories(crackdown_cache_tests PRIVATE src)
     target_link_libraries(crackdown_cache_tests PRIVATE rex::filesystem)
@@ -82,6 +94,9 @@ if(CRACKDOWN_BUILD_TESTS)
         DEPENDS crackdown_cache_tests crackdown_pack_fix
         USES_TERMINAL
     )
+    if(WIN32)
+        add_dependencies(crackdown_check crackdown_automation_tests)
+    endif()
 endif()
 
 # Codegen target - run 'cmake --build . --target crackdown_codegen'

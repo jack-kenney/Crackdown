@@ -48,6 +48,32 @@ The cache tests cover growth, append, zero-filled gaps, EOF, overflow, directory
 
 These tests establish the repaired behaviors. Full campaign completion, save/reload reliability, and visual fidelity still require gameplay validation.
 
+Intermittent startup/sign-in crashes are still under investigation. A successful play session does not establish startup reliability.
+
+## Local game automation (Windows)
+
+Launch with `--automation=true` to give the local test controller player one. Ordinary launches use the SDK's SDL controller input. Automation accepts Xbox buttons, both sticks, and triggers through a process-specific Windows shared-memory mapping; it requires no keyboard focus or virtual-controller driver. Controls release when their one-second lease expires if the sender stops.
+
+```powershell
+$game = Start-Process out\build\win-amd64-release\crackdown.exe -ArgumentList 'assets --automation=true --user_data_root=out/automation-userdata --log_file=out/automation.log --enable_console=false' -PassThru
+python tools/control_game.py --pid $game.Id --press start --seconds 0.25
+python tools/control_game.py --pid $game.Id --ly 24000 --seconds 1
+python tools/control_game.py --pid $game.Id --rx 12000 --seconds 0.5
+python tools/control_game.py --pid $game.Id --capture
+```
+
+`--press` accepts `a b x y start back up down left right lb rb ls rs`, including combinations. Stick axes range from -32768 to 32767; `--lt` and `--rt` range from 0 to 255. Use one sender per game process. Running the tool with only `--pid` releases the controller. Captures come directly from the game renderer and are saved under `out/automation/<PID>`; install Pillow (`python -m pip install Pillow`) to convert the RGB captures to PNG. A different user-data parent directory needs a matching `--directory` for captures.
+
+Release builds retain `crackdown.pdb` and `crackdown.map` for crash analysis. With regression tests enabled, the build also produces a small native debugger:
+
+```powershell
+out\build\win-amd64-release\crackdown_debugger.exe $game.Id > out\debugger.log
+```
+
+It attaches to the specified process and prints function names, fault addresses, and stack traces for unhandled exceptions. Ctrl+C detaches. Expected first-chance GPU memory-protection faults are passed to the runtime without flooding the log. Keep the matching executable, PDB, map, and runtime log when investigating a crash. A debugger can change timing, so a successful attached run does not establish startup reliability.
+
+The Windows automation regression test checks controller-state byte order, button events for menus, acknowledgement, rejection of partially published input, and automatic release with a changed packet number when the sender's lease expires. Manual automation has also reached Campaign Solo gameplay and exercised movement, jumping, and camera input.
+
 ## Legal Stuff
 This project is only inteded for use with legally acquired copies of Crackdown.
 This project is not affiliated with Microsoft, Microsoft Game Studios, or the now defunct Realtime Worlds.
