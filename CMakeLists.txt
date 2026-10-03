@@ -13,7 +13,7 @@ set(REXSDK_DIR "" CACHE PATH "Path to rexglue-sdk source tree")
 if(REXSDK_DIR)
     add_subdirectory("${REXSDK_DIR}" rexglue-sdk)
 else()
-    find_package(rexglue QUIET CONFIG)
+    find_package(rexglue 0.2.2 EXACT QUIET CONFIG)
     if(NOT rexglue_FOUND)
         message(FATAL_ERROR
             "ReXGlue SDK not found. Either:\n"
@@ -21,6 +21,14 @@ else()
             "  - Install the SDK package and ensure it is on CMAKE_PREFIX_PATH")
     endif()
 endif()
+
+find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+set(CRACKDOWN_PACK_FIX "${CMAKE_CURRENT_SOURCE_DIR}/tools/fix_vector_packing.py")
+add_custom_target(crackdown_pack_fix
+    COMMAND "${Python3_EXECUTABLE}" "${CRACKDOWN_PACK_FIX}" "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+    COMMENT "Checking generated FLOAT16_4 input snapshots"
+    VERBATIM
+)
 
 # Sources
 set(CRACKDOWN_SOURCES
@@ -55,10 +63,31 @@ target_link_libraries(crackdown PRIVATE
 
 # Platform entry point, ReXApp source, and platform-specific settings
 rexglue_configure_target(crackdown)
+add_dependencies(crackdown crackdown_pack_fix)
+
+option(CRACKDOWN_BUILD_TESTS "Build Crackdown regression tests" OFF)
+if(CRACKDOWN_BUILD_TESTS)
+    enable_testing()
+    add_executable(crackdown_cache_tests tests/cache_tests.cpp src/cache.cpp)
+    target_include_directories(crackdown_cache_tests PRIVATE src)
+    target_link_libraries(crackdown_cache_tests PRIVATE rex::filesystem)
+    add_test(NAME cache_filesystem COMMAND crackdown_cache_tests)
+    add_test(NAME vector_packing
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vector_packing_test.py"
+                --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(vector_packing PROPERTIES TIMEOUT 60)
+    add_custom_target(crackdown_check
+        COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
+        DEPENDS crackdown_cache_tests crackdown_pack_fix
+        USES_TERMINAL
+    )
+endif()
 
 # Codegen target - run 'cmake --build . --target crackdown_codegen'
 add_custom_target(crackdown_codegen
     COMMAND $<TARGET_FILE:rex::rexglue> codegen ${CMAKE_CURRENT_SOURCE_DIR}/crackdown_config.toml
+    COMMAND "${Python3_EXECUTABLE}" "${CRACKDOWN_PACK_FIX}" "${CMAKE_CURRENT_SOURCE_DIR}/generated"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating recompiled code for crackdown"
     VERBATIM

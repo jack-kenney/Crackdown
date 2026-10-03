@@ -1,5 +1,9 @@
 #pragma once
 
+#include <memory>
+#include <mutex>
+#include <vector>
+
 #include <rex/filesystem/device.h>
 #include <rex/filesystem/entry.h>
 #include <rex/filesystem/file.h>
@@ -16,11 +20,11 @@ public:
 
 	rex::X_STATUS SetLength(size_t length);
 
-	size_t GetSize() const { return data_.size(); }
+	size_t GetSize() const;
 
 private:
 	std::vector<uint8_t> data_{};
-	std::mutex mutex_{};
+	mutable std::mutex mutex_{};
 };
 
 class CacheFile : public rex::filesystem::File

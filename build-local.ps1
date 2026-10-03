@@ -1,0 +1,40 @@
+param(
+    [string]$SdkPath = $env:REXGLUE_SDK_ROOT,
+    [switch]$Regenerate,
+    [switch]$TestOnly,
+    [ValidateRange(1, 64)][int]$Jobs = 8
+)
+$ErrorActionPreference = 'Stop'
+if (-not $SdkPath) { $SdkPath = Join-Path $PSScriptRoot '../.tools/rexglue-v0.2.2/win-amd64' }
+$SdkPath = (Resolve-Path -LiteralPath $SdkPath).Path
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+$vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+if (-not $vs) { throw 'Visual Studio C++ Build Tools are required.' }
+$vcvars = Join-Path $vs 'VC/Auxiliary/Build/vcvars64.bat'
+$devEnvironment = & cmd.exe /d /c ('"{0}" >nul && set' -f $vcvars)
+if ($LASTEXITCODE -ne 0) { throw 'Could not initialize the Visual Studio build environment.' }
+foreach ($line in $devEnvironment) {
+    if ($line -match '^([^=]+)=(.*)$') {
+        [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+    }
+}
+$cmakeBin = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin'
+$clangBin = Join-Path $vs 'VC/Tools/Llvm/x64/bin'
+$ninjaBin = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja'
+$env:PATH = "$clangBin;$ninjaBin;$cmakeBin;$SdkPath/bin;$env:PATH"
+$cmake = Join-Path $cmakeBin 'cmake.exe'
+Push-Location $PSScriptRoot
+try {
+    if ($Regenerate -or -not (Test-Path 'generated/sources.cmake')) {
+        & "$SdkPath/bin/rexglue.exe" codegen crackdown_config.toml
+        if ($LASTEXITCODE -ne 0) { throw 'ReXGlue code generation failed.' }
+    }
+    & $cmake --preset win-amd64-release "-DCMAKE_PREFIX_PATH=$SdkPath" -DCRACKDOWN_BUILD_TESTS=ON
+    if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
+    & $cmake --build --preset win-amd64-release --target crackdown_check --parallel $Jobs
+    if ($LASTEXITCODE -ne 0) { throw 'Regression checks failed.' }
+    if (-not $TestOnly) {
+        & $cmake --build --preset win-amd64-release --parallel $Jobs
+        if ($LASTEXITCODE -ne 0) { throw 'Crackdown build failed.' }
+    }
+} finally { Pop-Location }
