@@ -5,6 +5,27 @@
 #include <cstdlib>
 #include <cstdint>
 #include <initializer_list>
+#include <cstring>
+
+int Dump(DWORD pid, const char* path) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!process) { std::printf("Open process failed: %lu\n", GetLastError()); return 1; }
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        std::printf("Create dump failed: %lu (choose a new filename)\n", GetLastError());
+        CloseHandle(process); return 1;
+    }
+    // Capture stacks, registers and memory mappings without writing gigabytes
+    // of guest RAM. This also works for a hang that raises no exception.
+    auto flags = static_cast<MINIDUMP_TYPE>(MiniDumpNormal | MiniDumpWithThreadInfo |
+        MiniDumpWithUnloadedModules | MiniDumpWithFullMemoryInfo);
+    BOOL ok = MiniDumpWriteDump(process, pid, file, flags, nullptr, nullptr, nullptr);
+    DWORD error = ok ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(file); CloseHandle(process);
+    if (!ok) { std::printf("Dump failed: %lu\n", error); return 1; }
+    std::printf("Saved thread/register dump: %s (guest heap excluded)\n", path);
+    return 0;
+}
 
 volatile LONG stop_requested=0;
 BOOL WINAPI Stop(DWORD event) {
@@ -58,7 +79,8 @@ void Report(HANDLE process, DWORD thread_id, const EXCEPTION_DEBUG_INFO& e) {
     std::fflush(stdout);
 }
 int main(int argc,char** argv) {
-    if(argc!=2){std::puts("Usage: crackdown_debugger <game PID> (Ctrl+C detaches)");return 2;}
+    if(argc==4 && !std::strcmp(argv[1],"--dump")) return Dump(strtoul(argv[2],nullptr,10),argv[3]);
+    if(argc!=2){std::puts("Usage: crackdown_debugger <game PID> (Ctrl+C detaches)\n       crackdown_debugger --dump <game PID> <new dump path>");return 2;}
     DWORD pid=strtoul(argv[1],nullptr,10);
     if(!DebugActiveProcess(pid)){std::printf("Attach failed: %lu\n",GetLastError());return 1;}
     DebugSetProcessKillOnExit(FALSE);

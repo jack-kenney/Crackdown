@@ -80,6 +80,14 @@ out\build\win-amd64-release\crackdown_debugger.exe $game.Id > out\debugger.log
 
 It attaches to the specified process and prints function names, fault addresses, and stack traces for unhandled exceptions. Ctrl+C detaches. Expected first-chance GPU memory-protection faults are passed to the runtime without flooding the log. Keep the matching executable, PDB, map, and runtime log when investigating a crash. A debugger can change timing, so a successful attached run does not establish startup reliability.
 
+For a freeze with no exception, leave the game running and capture a diagnostic dump:
+
+```powershell
+out\build\win-amd64-release\crackdown_debugger.exe --dump $game.Id out\hang.dmp
+```
+
+This records thread stacks, registers and memory mappings without attaching a debugger. It excludes the guest heap to keep the dump small. Choose a new filename for each capture; existing dumps are never overwritten. Preserve the matching executable, PDB, map and log alongside it.
+
 The Windows automation regression test checks controller-state byte order, button events for menus, acknowledgement, rejection of partially published input, and automatic release with a changed packet number when the sender's lease expires. Manual automation has also reached Campaign Solo gameplay and exercised movement, jumping, and camera input.
 
 ## Legal Stuff
