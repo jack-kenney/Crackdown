@@ -16,6 +16,7 @@
 #include "cache.h"
 #ifdef _WIN32
 #include "automation.h"
+#include "timer_resolution.h"
 #include <rex/graphics/graphics_system.h>
 #endif
 
@@ -25,6 +26,8 @@ REXCVAR_DEFINE_BOOL(misc_performance_improvements, false, "Game Enhancements", "
 REXCVAR_DEFINE_BOOL(show_perfgraph, false, "Game Enhancements", "Show FPS counter in the top right and performance graph in the left half of the screen.");
 #ifdef _WIN32
 REXCVAR_DEFINE_BOOL(automation, false, "Debug", "Enable local automated controller input and guest frame capture for testing.");
+REXCVAR_DEFINE_BOOL(high_resolution_timer, true, "Performance", "Request 1 ms Windows timer precision for runtime waits (restart required).")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 #endif
 
 class CrackdownApp : public rex::ReXApp {
@@ -41,6 +44,14 @@ public:
 #ifdef _WIN32
     void OnPreSetup(rex::RuntimeConfig& config) override
     {
+        if (REXCVAR_GET(high_resolution_timer)) {
+            timer_resolution_ = std::make_unique<WindowsTimerResolution>();
+            if (timer_resolution_->active()) {
+                REXLOG_INFO("Windows 1 ms timer precision enabled");
+            } else {
+                REXLOG_WARN("Windows 1 ms timer request failed; runtime waits may be slower");
+            }
+        }
         if (REXCVAR_GET(automation)) {
             automation_ = std::make_unique<AutomationSession>();
             config.input_factory = [this](bool) { return automation_->CreateInputSystem(); };
@@ -129,6 +140,7 @@ public:
     std::unique_ptr<rex::ui::DebugOverlayDialog> m_DebugOverlayDialog{};
     std::unique_ptr<rex::ui::SettingsDialog> m_SettingsDialog{};
 #ifdef _WIN32
+    std::unique_ptr<WindowsTimerResolution> timer_resolution_;
     std::unique_ptr<AutomationSession> automation_;
 #endif
 };

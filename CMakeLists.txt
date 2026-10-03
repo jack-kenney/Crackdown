@@ -43,11 +43,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/sources.cmake")
 endif()
 
 if(WIN32)
-    list(APPEND CRACKDOWN_SOURCES src/automation.cpp)
+    list(APPEND CRACKDOWN_SOURCES src/automation.cpp src/timer_resolution.cpp)
     add_executable(crackdown WIN32 ${CRACKDOWN_SOURCES})
     # Keep function names available for release crash dumps without recompiling
     # the large generated translation units with debug information.
     target_link_options(crackdown PRIVATE "LINKER:/debug,/map,/opt:ref,/opt:icf")
+    target_link_libraries(crackdown PRIVATE winmm)
 else()
     add_executable(crackdown ${CRACKDOWN_SOURCES})
 endif()

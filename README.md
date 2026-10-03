@@ -50,6 +50,14 @@ These tests establish the repaired behaviors. Full campaign completion, save/rel
 
 Intermittent startup/sign-in crashes are still under investigation. A successful play session does not establish startup reliability.
 
+## Windows frame pacing
+
+The game requests 1 ms timer precision before creating ReXGlue's runtime workers and keeps the request alive through runtime shutdown. This improves the precision of the SDK's emulated vertical-blank and command-processor sleeps. Successful requests are paired with `timeEndPeriod(1)` when the application is destroyed; a failed request is logged and startup continues.
+
+Use `--high_resolution_timer=false` for comparisons with the original timing. Changing this setting requires a restart. Modern Windows applies timer requests per process and may reduce precision for an occluded or minimized window; see [Microsoft's timer API documentation](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod).
+
+A controlled 30-second garage experiment on a Ryzen 7 9800X3D / RTX 5070 Ti measured 20.2 guest FPS before the request, 29.5 with it, and 19.8 after restoring the original state. The p95 submission interval fell from 77.7 to 37.7 ms. These are warm garage frame submissions, not displayed-frame latency or a guarantee of city/combat performance.
+
 ## Local game automation (Windows)
 
 Launch with `--automation=true` to give the local test controller player one. Ordinary launches use the SDK's SDL controller input. Automation accepts Xbox buttons, both sticks, and triggers through a process-specific Windows shared-memory mapping; it requires no keyboard focus or virtual-controller driver. Controls release when their one-second lease expires if the sender stops.
