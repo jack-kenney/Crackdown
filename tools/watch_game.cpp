@@ -24,9 +24,11 @@ void Report(HANDLE process, DWORD thread_id, const EXCEPTION_DEBUG_INFO& e) {
     if (!GetThreadContext(thread,&context)) {CloseHandle(thread);return;}
     auto original=context;
     STACKFRAME64 frame{};
-    frame.AddrPC={context.Rip,AddrModeFlat};
-    frame.AddrStack={context.Rsp,AddrModeFlat};
-    frame.AddrFrame={context.Rbp,AddrModeFlat};
+    // ADDRESS64 also contains Segment between Offset and Mode. A two-value
+    // aggregate initializer leaves Mode at AddrMode1616, which breaks x64 walks.
+    frame.AddrPC.Offset=context.Rip; frame.AddrPC.Mode=AddrModeFlat;
+    frame.AddrStack.Offset=context.Rsp; frame.AddrStack.Mode=AddrModeFlat;
+    frame.AddrFrame.Offset=context.Rbp; frame.AddrFrame.Mode=AddrModeFlat;
     for(int i=0;i<48;++i){
         char buffer[sizeof(SYMBOL_INFO)+MAX_SYM_NAME]{};
         auto* sym=reinterpret_cast<SYMBOL_INFO*>(buffer); sym->SizeOfStruct=sizeof(SYMBOL_INFO);sym->MaxNameLen=MAX_SYM_NAME;
