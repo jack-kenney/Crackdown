@@ -36,6 +36,18 @@ out\build\win-amd64-release\crackdown.exe assets
 ```
 `Play-Crackdown.cmd` provides the same asset path, stores user data in `out/userdata`, and writes diagnostics to `out/crackdown.log`.
 
+## Rendering resolution
+
+The Direct3D 12 renderer can render the game's 1280×720 image at 2560×1440 by scaling both axes by two. Launch the built executable with:
+
+```powershell
+out\build\win-amd64-release\crackdown.exe assets --draw_resolution_scale_x=2 --draw_resolution_scale_y=2
+```
+
+Use `1` for both values to restore 720p. These are rendering settings; resizing the window changes the displayed image size independently. A 1080p display can downsample the 1440p render. Scaling does not replace the game's original textures or movie assets. Both settings require restarting the game; the SDK's F4 settings overlay also exposes them under GPU.
+
+A preliminary RTX 5070 Ti test captured real 2560×1440 renderer output and exercised shooting, movement, and camera rotation with working audio. Two 30-second stationary Agency garage samples measured 29.49 guest frame submissions/s at 720p and 29.44 at 1440p, with approximately 37.6 ms p95 submission intervals in both. Another game instance remained running during both samples. These results support trying 1440p, but do not establish city/combat performance or displayed-frame timing.
+
 ## Correctness fixes and regression checks
 
 The RAM cache supports creating, extending and appending files, refreshes file-size metadata, safely handles directory metadata and I/O, and synchronizes shared data access. Closing a cache file releases its handle. Its data remains available to other open handles.
