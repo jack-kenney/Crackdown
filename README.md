@@ -51,6 +51,12 @@ Use `1` for both values to restore 720p. These are rendering settings; resizing 
 
 A preliminary RTX 5070 Ti test captured real 2560×1440 renderer output and exercised shooting, movement, and camera rotation with working audio. Two 30-second stationary Agency garage samples measured 29.49 guest frame submissions/s at 720p and 29.44 at 1440p, with approximately 37.6 ms p95 submission intervals in both. Another game instance remained running during both samples. These results support trying 1440p, but do not establish city/combat performance or displayed-frame timing.
 
+## Startup movies
+
+`skip_intro_movies` is enabled by default. It skips the Microsoft (`MSGS.bik`) and Realtime Worlds (`RTW_Logo.bik`) startup movies using TU0's normal completion handler, which frees their preloaded data and advances the frontend sequence. The extracted movie files remain intact. Static middleware/legal cards, the title animation, and campaign, gang and boss cutscenes retain their original behavior.
+
+Launch with `--skip_intro_movies=false` to restore the startup movies; restart after changing this option. Windows runtime checks reached the title screen with the option enabled and disabled, and reached 1440p campaign gameplay with it enabled after playing the campaign opening movie.
+
 ## Correctness fixes and regression checks
 
 The RAM cache supports creating, extending and appending files, refreshes file-size metadata, safely handles directory metadata and I/O, and synchronizes shared data access. Closing a cache file releases its handle. Its data remains available to other open handles.
