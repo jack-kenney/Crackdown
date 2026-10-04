@@ -24,8 +24,10 @@ endif()
 
 find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
 set(CRACKDOWN_PACK_FIX "${CMAKE_CURRENT_SOURCE_DIR}/tools/fix_vector_packing.py")
+set(CRACKDOWN_AUDIO_MATH_FIX "${CMAKE_CURRENT_SOURCE_DIR}/tools/fix_audio_math.py")
 add_custom_target(crackdown_pack_fix
     COMMAND "${Python3_EXECUTABLE}" "${CRACKDOWN_PACK_FIX}" "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+    COMMAND "${Python3_EXECUTABLE}" "${CRACKDOWN_AUDIO_MATH_FIX}" "${CMAKE_CURRENT_SOURCE_DIR}/generated"
     COMMENT "Checking generated FLOAT16_4 input snapshots"
     VERBATIM
 )
@@ -34,6 +36,7 @@ add_custom_target(crackdown_pack_fix
 set(CRACKDOWN_SOURCES
     src/main.cpp
     src/cache.cpp
+    src/audio_barrier.cpp
 )
 
 # Include generated code if codegen has been run
@@ -73,6 +76,10 @@ add_dependencies(crackdown crackdown_pack_fix)
 option(CRACKDOWN_BUILD_TESTS "Build Crackdown regression tests" OFF)
 if(CRACKDOWN_BUILD_TESTS)
     enable_testing()
+    add_executable(crackdown_audio_barrier_tests tests/audio_barrier_tests.cpp src/audio_barrier.cpp)
+    target_link_libraries(crackdown_audio_barrier_tests PRIVATE rex::core)
+    add_test(NAME audio_barrier COMMAND crackdown_audio_barrier_tests)
+    set_tests_properties(audio_barrier PROPERTIES TIMEOUT 60)
     if(WIN32)
         add_executable(crackdown_debugger tools/watch_game.cpp)
         target_link_libraries(crackdown_debugger PRIVATE dbghelp)
@@ -90,9 +97,21 @@ if(CRACKDOWN_BUILD_TESTS)
                 --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                 --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(vector_packing PROPERTIES TIMEOUT 60)
+    if(REXSDK_DIR)
+        set(CRACKDOWN_SDK_INCLUDE "${REXSDK_DIR}/include")
+    else()
+        get_target_property(CRACKDOWN_SDK_INCLUDES rex::core INTERFACE_INCLUDE_DIRECTORIES)
+        list(GET CRACKDOWN_SDK_INCLUDES 0 CRACKDOWN_SDK_INCLUDE)
+    endif()
+    add_test(NAME audio_math
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_math_test.py"
+                --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                --include "${CRACKDOWN_SDK_INCLUDE}"
+                --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(audio_math PROPERTIES TIMEOUT 60)
     add_custom_target(crackdown_check
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-        DEPENDS crackdown_cache_tests crackdown_pack_fix
+        DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_pack_fix
         USES_TERMINAL
     )
     if(WIN32)
@@ -104,6 +123,7 @@ endif()
 add_custom_target(crackdown_codegen
     COMMAND $<TARGET_FILE:rex::rexglue> codegen ${CMAKE_CURRENT_SOURCE_DIR}/crackdown_config.toml
     COMMAND "${Python3_EXECUTABLE}" "${CRACKDOWN_PACK_FIX}" "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+    COMMAND "${Python3_EXECUTABLE}" "${CRACKDOWN_AUDIO_MATH_FIX}" "${CMAKE_CURRENT_SOURCE_DIR}/generated"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Generating recompiled code for crackdown"
     VERBATIM
