@@ -76,6 +76,10 @@ Launch with `--automation=true` to give the local test controller player one. Or
 
 Normal controller input acquires SDL's joystick lock before calling the SDK input driver. SDL controller event watches already hold that lock before acquiring the SDK controller-state mutex; matching this order prevents a deadlock during rumble and capability queries. Rumble remains enabled. A regression test exercises 50,000 concurrent events and rumble requests against the real SDL lock; removing the ordering wrapper reproduces the hang.
 
+On Windows, `--sdl_direct_xinput=true` selects SDL's XInput backend for Xbox controllers by disabling its Raw Input backend before initialization. This reads Xbox pad state during the game's controller query instead of depending on delivery through a Windows message queue. SDL continues to handle mappings, menu keystrokes, hotplug and rumble. The default is `false`; changing it requires restarting. Other SDL controller backends remain available. Regression checks exercise buttons and release packets, signed stick endpoints, independent triggers, menu events, rumble and disconnect using an SDL virtual controller in both modes. A connected Microsoft wired Xbox 360 pad was confirmed to change from SDL's `r` backend tag to `x`.
+
+This is an input-latency experiment, with no measured physical-button-to-screen improvement claimed yet. Instrumented TU0 garage gameplay polls input about once per 34 ms frame; its command processor also waits for an emulated vertical blank just before presenting. Direct controller polling does not remove those frame and presentation delays. ReXGlue's `--vsync=false` also accelerates the emulated vertical-blank timer and changes command-processor waits, so it is not used as an input-latency preset.
+
 ```powershell
 $game = Start-Process out\build\win-amd64-release\crackdown.exe -ArgumentList 'assets --automation=true --user_data_root=out/automation-userdata --log_file=out/automation.log --enable_console=false' -PassThru
 python tools/control_game.py --pid $game.Id --press start --seconds 0.25

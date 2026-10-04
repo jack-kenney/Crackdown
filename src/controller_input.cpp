@@ -1,10 +1,17 @@
 #include "controller_input.h"
 
 #include <SDL.h>
+#include <rex/cvar.h>
+#include <rex/logging.h>
 #include <rex/input/nop/nop_input_driver.h>
 #include <rex/input/sdl/sdl_input_driver.h>
 
 using rex::X_STATUS;
+
+#ifdef _WIN32
+REXCVAR_DEFINE_BOOL(sdl_direct_xinput, false, "Input", "Poll Xbox controllers through SDL's XInput backend instead of Windows Raw Input (restart required).")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+#endif
 
 namespace {
 class JoystickLock {
@@ -49,6 +56,15 @@ rex::X_RESULT OrderedControllerInput::GetKeystroke(uint32_t user, uint32_t flags
 std::unique_ptr<rex::system::IInputSystem> CreateControllerInputSystem(bool tool_mode) {
     auto input = std::make_unique<rex::input::InputSystem>(nullptr);
     if (!tool_mode) {
+#ifdef _WIN32
+        if (REXCVAR_GET(sdl_direct_xinput)) {
+            // Raw Input arrives through a Windows message queue. The XInput
+            // backend reads the latest Xbox pad state during GetState instead.
+            // Keep SDL's mapping, menu keystrokes and rumble implementation.
+            SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_RAWINPUT, "0", SDL_HINT_OVERRIDE);
+            REXLOG_INFO("SDL direct Xbox polling requested: Windows Raw Input disabled");
+        }
+#endif
         auto driver = std::make_unique<OrderedControllerInput>(
             std::make_unique<rex::input::sdl::SDLInputDriver>(nullptr, 0));
         if (driver->Setup() == X_STATUS_SUCCESS) input->AddDriver(std::move(driver));
