@@ -37,6 +37,11 @@ set(CRACKDOWN_SOURCES
     src/enumeration.cpp
 )
 
+option(CRACKDOWN_BUILD_EXPERIMENTS "Include opt-in camera and unvalidated FPS pacing experiments" OFF)
+if(CRACKDOWN_BUILD_EXPERIMENTS)
+    list(APPEND CRACKDOWN_SOURCES src/camera_options.cpp experiments/fps60.cpp)
+endif()
+
 # Include generated code if codegen has been run
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/sources.cmake")
     include(generated/sources.cmake)
@@ -75,6 +80,8 @@ if(CRACKDOWN_BUILD_TESTS)
     enable_testing()
     add_test(NAME benchmark_routes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py")
+    add_test(NAME xui_packages
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/xzp_assets_test.py")
     add_executable(crackdown_enumeration_tests tests/enumeration_tests.cpp src/enumeration.cpp)
     target_include_directories(crackdown_enumeration_tests PRIVATE generated)
     target_link_libraries(crackdown_enumeration_tests PRIVATE rex::runtime)
@@ -85,6 +92,13 @@ if(CRACKDOWN_BUILD_TESTS)
     add_test(NAME audio_barrier COMMAND crackdown_audio_barrier_tests)
     set_tests_properties(audio_barrier PROPERTIES TIMEOUT 60)
     if(WIN32)
+        add_test(NAME launcher_settings
+            COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass -File
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher_settings_test.ps1")
+        add_executable(crackdown_fps60_tests experiments/fps60_tests.cpp experiments/fps60.cpp)
+        target_include_directories(crackdown_fps60_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
+        target_link_libraries(crackdown_fps60_tests PRIVATE rex::runtime)
+        add_test(NAME fps60_experiment_guards COMMAND crackdown_fps60_tests)
         add_executable(crackdown_graphics_options_tests tests/graphics_options_tests.cpp src/graphics_options.cpp)
         target_include_directories(crackdown_graphics_options_tests PRIVATE src generated)
         target_link_libraries(crackdown_graphics_options_tests PRIVATE rex::runtime)
@@ -129,12 +143,21 @@ if(CRACKDOWN_BUILD_TESTS)
                 --include "${CRACKDOWN_SDK_INCLUDE}"
                 --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(spatial_audio PROPERTIES TIMEOUT 60)
+    if(WIN32 AND NOT REXSDK_DIR)
+        get_filename_component(CRACKDOWN_SDK_ROOT "${CRACKDOWN_SDK_INCLUDE}" DIRECTORY)
+        add_test(NAME camera_snapshot
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/camera_options_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(camera_snapshot PROPERTIES TIMEOUT 60)
+    endif()
     add_custom_target(crackdown_check
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
         DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_enumeration_tests crackdown_pack_fix
         USES_TERMINAL
     )
     if(WIN32)
+        add_dependencies(crackdown_check crackdown_fps60_tests)
         add_dependencies(crackdown_check crackdown_graphics_options_tests)
         add_dependencies(crackdown_check crackdown_automation_tests)
         add_dependencies(crackdown_check crackdown_controller_backend_tests)

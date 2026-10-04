@@ -2,6 +2,7 @@ param(
     [string]$SdkPath = $env:REXGLUE_SDK_ROOT,
     [switch]$Regenerate,
     [switch]$TestOnly,
+    [switch]$Experiments,
     [ValidateRange(1, 64)][int]$Jobs = 8
 )
 $ErrorActionPreference = 'Stop'
@@ -30,12 +31,15 @@ try {
     if ($Regenerate) { $codegenArgs += '--ignore-stamp' }
     & "$SdkPath/bin/rexglue.exe" @codegenArgs
     if ($LASTEXITCODE -ne 0) { throw 'ReXGlue code generation failed.' }
-    & $cmake --preset win-amd64-release "-DCMAKE_PREFIX_PATH=$SdkPath" -DCRACKDOWN_BUILD_TESTS=ON
+    $buildDirectory = Join-Path $PSScriptRoot 'out/build/win-amd64-release'
+    if ($Experiments) { $buildDirectory = Join-Path $PSScriptRoot 'out/build/win-amd64-experiments' }
+    $experimentOption = if ($Experiments) { 'ON' } else { 'OFF' }
+    & $cmake --preset win-amd64-release -B $buildDirectory "-DCMAKE_PREFIX_PATH=$SdkPath" -DCRACKDOWN_BUILD_TESTS=ON "-DCRACKDOWN_BUILD_EXPERIMENTS=$experimentOption"
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
-    & $cmake --build --preset win-amd64-release --target crackdown_check --parallel $Jobs
+    & $cmake --build $buildDirectory --target crackdown_check --parallel $Jobs
     if ($LASTEXITCODE -ne 0) { throw 'Regression checks failed.' }
     if (-not $TestOnly) {
-        & $cmake --build --preset win-amd64-release --parallel $Jobs
+        & $cmake --build $buildDirectory --parallel $Jobs
         if ($LASTEXITCODE -ne 0) { throw 'Crackdown build failed.' }
     }
 } finally { Pop-Location }

@@ -22,7 +22,11 @@ Historical gameplay and performance measurements below used SDK 0.2.2. The 0.10.
 
 Known limits include intermittent startup/sign-in crashes, unverified full-campaign completion and long-term save reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a custom in-game graphics menu are future work.
 
+Enhancement work now includes launcher filtering controls up to 16x, a separately built camera/FOV prototype verified in the garage, and a frontend PNG replacement verified on the title screen. See [graphics tests and experimental builds](docs/graphics-enhancements.md) and [texture package tooling](docs/texture-enhancements.md). The separate [frame-rate investigation](experiments/README.md) reached about 56.5 guest FPS, but movement accelerated by about 1.9x; a correct 60 FPS gameplay mode still requires simulation-timing work. These experiments do not change the regular build's pacing.
+
 ## ReXGlue 0.10.0 validation
+
+The current Windows regression suite passes 15 checks, including launcher filtering preferences, XUI package preservation/replacement, the actual TU0 camera snapshot hook, and the disabled-default FPS prototype guards. The camera and frame-rate hooks are included only in an experimental build.
 
 The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
 
@@ -97,6 +101,7 @@ Double-click `Launch-Crackdown.cmd` after building. It opens a Windows settings 
 | --- | --- |
 | Render resolution | 720p, 1440p (default), or 4K (experimental). Changes internal rendering independently of window size. |
 | Anti-aliasing | Original rendering (default), FXAA, or higher quality FXAA. Uses the SDK's final-image filter; does not replace the game's textures. |
+| Texture filtering | Game settings, off, or 1x/2x/4x/8x/16x anisotropic filtering. 4x retains the SDK default. Higher levels sharpen eligible surfaces viewed at an angle, such as roads. |
 | Fullscreen | Borderless fullscreen or a window (default). |
 | Bloom / shadows | Independent disable switches; both retain original game behavior by default. |
 | Lighting accuracy fix | Enables GPU resolve readback to improve visibility and color accuracy. Off by default because it can substantially reduce frame rate. |
@@ -107,6 +112,8 @@ Double-click `Launch-Crackdown.cmd` after building. It opens a Windows settings 
 | Controller polling | Standard SDL (default) or direct XInput for Xbox controllers. |
 
 VSync and the Windows timer precision request retain the tested timing settings. Changing these options requires a new game session. The launcher does not change an already running game.
+
+For a 16x filtering comparison, select **16x** in the launcher or supply `--anisotropic_override=5` directly. The benchmark launcher accepts `-AnisotropicOverride 3` for 4x and `-AnisotropicOverride 5` for 16x; use the same baseline and route or camera sweep. Existing saved launcher preferences retain 4x when they have no filtering setting. No city performance improvement or cost has been measured for this option yet.
 
 Equivalent command-line flags include `--show_fps=true`, `--show_perfgraph=true`, `--disable_bloom=true`, `--disable_shadows=true`, `--fix_lighting=true`, `--fix_light_occlusion=false`, `--swap_post_effect=fxaa` (or `fxaa_extreme`), and `--fullscreen=true`. The legacy `--misc_performance_improvements=true` disables both bloom and shadows; its inherited bloom write has been corrected so zero actually skips TU0's bloom pass.
 

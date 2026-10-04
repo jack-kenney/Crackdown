@@ -137,6 +137,10 @@ class FrameProbe:
                 raise RuntimeError('Frame sampling requires the D3D12 command processor')
             self.frame_address = cp + metadata['cp_frame']
             self.completed_address = cp + metadata['cp_completed']
+            self.virtual_membase = None
+            if 'runtime_memory' in metadata and 'memory_virtual' in metadata:
+                memory = self.read64(runtime + metadata['runtime_memory'])
+                self.virtual_membase = self.read64(memory + metadata['memory_virtual'])
             self.identity = {'sdk': metadata['sdk'], 'dll_sha256': metadata['dll_sha256']}
             self.read()
         except BaseException:
@@ -154,6 +158,13 @@ class FrameProbe:
 
     def read(self):
         return self.read64(self.frame_address), self.read64(self.completed_address)
+
+    def read_guest(self, address, size):
+        if self.virtual_membase is None:
+            raise RuntimeError('Guest inspection needs updated metadata; run prepare-benchmark.ps1')
+        if not 0 <= address <= 0xffffffff or not 0 < size <= 0x10000000 or address + size > 0x100000000:
+            raise ValueError('Guest read must stay within the 32-bit address space (maximum 256 MiB)')
+        return self.read_bytes(self.virtual_membase + address, size)
 
     def cpu_seconds(self):
         values = [C.c_uint64() for _ in range(4)]
