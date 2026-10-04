@@ -169,6 +169,11 @@ correctness. Keep any further FPS experiments out of the stable executable.
 
 ## Native timestep prototype
 
+Double-click `Play-Crackdown-60FPS-Experimental.cmd` to launch the experimental
+60 FPS target using your saved launcher graphics settings. On first launch it
+copies `out/userdata` into `out/userdata-fps-experimental`; later runs retain
+that separate profile. Logs go to `out/native-timing-game.log`.
+
 Build separately with `./build-local.ps1 -Experiments`. The executable is
 `out/build/win-amd64-experiments/crackdown.exe`. Add `--native_frame_rate=60`
 to an otherwise normal launch, retaining `--vsync=true`. Other accepted targets
