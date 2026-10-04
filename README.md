@@ -35,6 +35,7 @@ Launch from the repository root:
 out\build\win-amd64-release\crackdown.exe assets
 ```
 `Play-Crackdown.cmd` provides the same asset path, stores user data in `out/userdata`, and writes diagnostics to `out/crackdown.log`.
+The launcher also selects an eight-block audio queue to reduce playback delay; launching the executable directly retains the SDK's 64-block default unless `--audio_maxqframes=8` is supplied.
 
 ## Rendering resolution
 
@@ -43,6 +44,8 @@ The Direct3D 12 renderer can render the game's 1280×720 image at 2560×1440 by 
 ```powershell
 out\build\win-amd64-release\crackdown.exe assets --draw_resolution_scale_x=2 --draw_resolution_scale_y=2
 ```
+
+`Play-Crackdown-1440p.cmd` combines this resolution with the smaller audio queue and writes diagnostics to `out/crackdown-1440p.log`.
 
 Use `1` for both values to restore 720p. These are rendering settings; resizing the window changes the displayed image size independently. A 1080p display can downsample the 1440p render. Scaling does not replace the game's original textures or movie assets. Both settings require restarting the game; the SDK's F4 settings overlay also exposes them under GPU.
 
@@ -109,6 +112,16 @@ This records thread stacks, registers and memory mappings without attaching a de
 The Windows automation regression test checks controller-state byte order, button events for menus, acknowledgement, rejection of partially published input, and automatic release with a changed packet number when the sender's lease expires. Manual automation has also reached Campaign Solo gameplay and exercised movement, jumping, and camera input.
 
 ## Windows audio diagnostics
+
+ReXGlue 0.2.2 defaults to 64 queued blocks of 256 samples at 48 kHz. A full queue holds approximately 341 ms of already mixed audio, delaying newly mixed gunshots and movie audio. Both repository launchers use `--audio_maxqframes=8`, reducing this capacity to approximately 43 ms without changing the decoder, mixer, sample rate or SDL callback size. This setting must be supplied at startup; restart to change it. For a direct launch:
+
+```powershell
+out\build\win-amd64-release\crackdown.exe assets --audio_maxqframes=8
+```
+
+Diagnostic callback timestamps on the tested Windows stereo device measured median mixer-submission-to-SDL-callback residence of 339.9 ms with 64 blocks and 39.5 ms with eight. A 60-second 1440p gameplay sample exercised repeated shots, weapon switching, movement and camera rotation: all 11,250 callbacks contained nonzero finite audio, with no empty-queue callbacks, and p95 residence was 49.3 ms. Separate intro and campaign-movie samples also had no empty-queue or nonfinite callbacks. Diagnostic instrumentation was confined to a separate executable; the launchers use the existing SDK implementation.
+
+These measurements cover the runtime queue, not physical button-to-speaker latency, Windows/device buffering, perceptual movie sync or extended city combat. If a different system develops crackles, try `--audio_maxqframes=16` (approximately 85 ms capacity) or restore `64` for comparison by editing the launcher or launching the executable directly with that value. Do not change the live SDK setting in the overlay: existing semaphore limits are established during startup.
 
 If sound is missing, inspect the game's actual Windows audio session while it is running:
 
