@@ -2,6 +2,7 @@ param(
     [string]$ProfileSource,
     [ValidateSet(1, 2, 3)][int]$ResolutionScale,
     [ValidateSet('none', 'fxaa', 'fxaa_extreme')][string]$Antialiasing,
+    [ValidateSet(-1, 0, 1, 2, 3, 4, 5)][int]$AnisotropicOverride,
     [bool]$FixLighting,
     [bool]$Bloom,
     [bool]$Shadows,
@@ -13,6 +14,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $settings = Read-LauncherSettings (Join-Path $root 'out/launcher-settings.json')
 $settings.fullscreen = $Fullscreen
 foreach ($pair in @(@('ResolutionScale', 'resolutionScale'), @('Antialiasing', 'antialiasing'),
+                    @('AnisotropicOverride', 'anisotropicOverride'),
                     @('FixLighting', 'fixLighting'), @('Bloom', 'bloom'), @('Shadows', 'shadows'))) {
     if ($PSBoundParameters.ContainsKey($pair[0])) { $settings[$pair[1]] = $PSBoundParameters[$pair[0]] }
 }

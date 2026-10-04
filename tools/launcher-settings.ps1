@@ -1,7 +1,8 @@
 function Get-LauncherDefaults {
     return @{
         schemaVersion = 1; executablePath = ''; resolutionScale = 2
-        antialiasing = 'none'; fullscreen = $false; bloom = $true; shadows = $true
+        antialiasing = 'none'; anisotropicOverride = 3
+        fullscreen = $false; bloom = $true; shadows = $true
         fixLighting = $false; fixLightOcclusion = $true
         showFps = $false; showPerfgraph = $false; skipIntroMovies = $true
         audioQueueFrames = 8; directXinput = $false
@@ -24,6 +25,9 @@ function Read-LauncherSettings([string]$Path) {
             $value = [int]$value
         } elseif ($key -eq 'audioQueueFrames') {
             if (($value -isnot [int] -and $value -isnot [long]) -or $value -notin @(8, 16, 64)) { throw 'Invalid audio buffer size.' }
+            $value = [int]$value
+        } elseif ($key -eq 'anisotropicOverride') {
+            if (($value -isnot [int] -and $value -isnot [long]) -or $value -notin @(-1, 0, 1, 2, 3, 4, 5)) { throw 'Invalid anisotropic filtering mode.' }
             $value = [int]$value
         } elseif ($key -eq 'antialiasing') {
             if ($value -isnot [string] -or $value -cnotin @('none', 'fxaa', 'fxaa_extreme')) { throw 'Invalid anti-aliasing mode.' }
@@ -49,6 +53,7 @@ function Get-GameArguments([string]$Root, [hashtable]$Settings) {
         draw_resolution_scale_x = $Settings.resolutionScale
         draw_resolution_scale_y = $Settings.resolutionScale
         swap_post_effect = $Settings.antialiasing
+        anisotropic_override = $Settings.anisotropicOverride
         fullscreen = $Settings.fullscreen
         fix_lighting = $Settings.fixLighting
         fix_light_occlusion = $Settings.fixLightOcclusion

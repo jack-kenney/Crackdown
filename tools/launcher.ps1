@@ -22,7 +22,7 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $form = [System.Windows.Forms.Form]::new()
 $form.Text = 'Crackdown Launcher'
-$form.ClientSize = [System.Drawing.Size]::new(720, 625)
+$form.ClientSize = [System.Drawing.Size]::new(720, 669)
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.StartPosition = 'CenterScreen'
@@ -58,7 +58,7 @@ function Add-Combo($Parent, [string[]]$Items, [int]$X, [int]$Y, [int]$Width = 34
 function Add-Button([string]$Text, [int]$X, [int]$Width) {
     $control = [System.Windows.Forms.Button]::new()
     $control.Text = $Text
-    $control.Location = [System.Drawing.Point]::new($X, 563)
+    $control.Location = [System.Drawing.Point]::new($X, 607)
     $control.Size = [System.Drawing.Size]::new($Width, 40)
     $form.Controls.Add($control)
     return $control
@@ -70,7 +70,7 @@ $title.ForeColor = [System.Drawing.Color]::FromArgb(25, 48, 87)
 [void](Add-Label $form 'Choose your settings, then launch. Changes apply to the next game session.' 26 62 670)
 $tabs = [System.Windows.Forms.TabControl]::new()
 $tabs.Location = [System.Drawing.Point]::new(24, 102)
-$tabs.Size = [System.Drawing.Size]::new(672, 348)
+$tabs.Size = [System.Drawing.Size]::new(672, 392)
 $form.Controls.Add($tabs)
 $graphics = [System.Windows.Forms.TabPage]::new('Graphics')
 $game = [System.Windows.Forms.TabPage]::new('Game & audio')
@@ -82,19 +82,21 @@ $tabs.TabPages.AddRange(@($graphics, $game))
 $resolution = Add-Combo $graphics @('1280 x 720 (original)', '2560 x 1440', '3840 x 2160 (experimental)') 210 15 423
 [void](Add-Label $graphics 'Anti-aliasing' 18 62 190)
 $antialiasing = Add-Combo $graphics @('Original game rendering', 'FXAA', 'FXAA - higher quality') 210 59 423
-$fullscreen = Add-Check $graphics 'Borderless fullscreen' 18 104
-$bloom = Add-Check $graphics 'Bloom' 18 143 190
-$shadows = Add-Check $graphics 'Shadows' 210 143 220
-$lighting = Add-Check $graphics 'Lighting accuracy fix (costly)' 18 182
-$occlusion = Add-Check $graphics 'Hide light halos that show through walls' 18 221
-$graphicsNote = Add-Label $graphics '1440p is tested. 4K is experimental. FXAA smooths the final image; original textures remain.' 18 264 615 48
+[void](Add-Label $graphics 'Texture filtering' 18 106 190)
+$filtering = Add-Combo $graphics @('Game settings (no override)', 'Anisotropic filtering off', '1x', '2x', '4x (SDK default)', '8x', '16x (sharper distant surfaces)') 210 103 423
+$fullscreen = Add-Check $graphics 'Borderless fullscreen' 18 148
+$bloom = Add-Check $graphics 'Bloom' 18 187 190
+$shadows = Add-Check $graphics 'Shadows' 210 187 220
+$lighting = Add-Check $graphics 'Lighting accuracy fix (costly)' 18 226
+$occlusion = Add-Check $graphics 'Hide light halos that show through walls' 18 265
+$graphicsNote = Add-Label $graphics 'Filtering sharpens surfaces viewed at an angle. 4x retains the tested default; compare 16x using a city benchmark.' 18 308 615 48
 $graphicsNote.ForeColor = [System.Drawing.Color]::FromArgb(80, 92, 112)
 $lighting.Add_CheckedChanged({
     if ($lighting.Checked) {
         $graphicsNote.Text = 'The lighting fix reads render results back to the CPU and can substantially reduce frame rate. It is off by default.'
         $graphicsNote.ForeColor = [System.Drawing.Color]::FromArgb(155, 90, 0)
     } else {
-        $graphicsNote.Text = '1440p is tested. 4K is experimental. FXAA smooths the final image; original textures remain.'
+        $graphicsNote.Text = 'Filtering sharpens surfaces viewed at an angle. 4x retains the tested default; compare 16x using a city benchmark.'
         $graphicsNote.ForeColor = [System.Drawing.Color]::FromArgb(80, 92, 112)
     }
 })
@@ -108,17 +110,17 @@ $audio = Add-Combo $game @('Low latency (8 blocks, ~43 ms)', 'More buffering (16
 $controllerPolling = Add-Combo $game @('Standard SDL polling', 'Direct XInput (Xbox controllers)') 210 189 423
 [void](Add-Label $game 'VSync and timer precision retain the tested timing settings. Campaign cutscenes remain available.' 18 248 615 48)
 
-[void](Add-Label $form 'Game executable' 24 465 150)
+[void](Add-Label $form 'Game executable' 24 509 150)
 $executable = [System.Windows.Forms.TextBox]::new()
-$executable.Location = [System.Drawing.Point]::new(174, 462)
+$executable.Location = [System.Drawing.Point]::new(174, 506)
 $executable.Size = [System.Drawing.Size]::new(422, 28)
 $form.Controls.Add($executable)
 $browse = [System.Windows.Forms.Button]::new()
 $browse.Text = 'Browse...'
-$browse.Location = [System.Drawing.Point]::new(604, 460)
+$browse.Location = [System.Drawing.Point]::new(604, 504)
 $browse.Size = [System.Drawing.Size]::new(92, 30)
 $form.Controls.Add($browse)
-$status = Add-Label $form 'Settings are saved locally. F4 opens additional settings in the game.' 24 508 672 42
+$status = Add-Label $form 'Settings are saved locally. F4 opens additional settings in the game.' 24 552 672 42
 $status.ForeColor = [System.Drawing.Color]::FromArgb(80, 92, 112)
 $reset = Add-Button 'Reset defaults' 24 152
 $save = Add-Button 'Save settings' 384 145
@@ -131,6 +133,7 @@ $form.AcceptButton = $launch
 function Set-Controls([hashtable]$Values) {
     $resolution.SelectedIndex = $Values.resolutionScale - 1
     $antialiasing.SelectedIndex = @('none', 'fxaa', 'fxaa_extreme').IndexOf($Values.antialiasing)
+    $filtering.SelectedIndex = $Values.anisotropicOverride + 1
     $fullscreen.Checked = $Values.fullscreen
     $bloom.Checked = $Values.bloom
     $shadows.Checked = $Values.shadows
@@ -148,6 +151,7 @@ function Get-Controls {
         schemaVersion = 1; executablePath = $executable.Text.Trim()
         resolutionScale = $resolution.SelectedIndex + 1
         antialiasing = @('none', 'fxaa', 'fxaa_extreme')[$antialiasing.SelectedIndex]
+        anisotropicOverride = $filtering.SelectedIndex - 1
         fullscreen = $fullscreen.Checked; bloom = $bloom.Checked; shadows = $shadows.Checked
         fixLighting = $lighting.Checked; fixLightOcclusion = $occlusion.Checked
         showFps = $fps.Checked; showPerfgraph = $perfgraph.Checked
