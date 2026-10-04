@@ -5,6 +5,10 @@
 #include <cstdlib>
 
 REX_EXTERN(sub_826BC3D0);
+static unsigned native_target;
+namespace crackdown::experiments {
+unsigned NativeFrameRate() { return native_target; }
+}
 static uint64_t expected_argument;
 static unsigned expected_cap, calls;
 REX_EXTERN(__imp__sub_826BC3D0) {
@@ -33,6 +37,17 @@ int main() {
         }
     }
     if (calls != 10) std::abort();
+    for (unsigned target : {60u, 120u, 144u, 240u}) {
+        native_target = target;
+        for (unsigned interval : {0u, 1u, 2u, 3u, 15u}) {
+            ctx.r3.u64 = 0x123456789ABC005Aull | (interval << 8);
+            expected_argument = ctx.r3.u64 & ~uint64_t(0xF00);
+            expected_cap = 1001;
+            REX_STORE_U32(0x82BAA330, 32);
+            sub_826BC3D0(ctx, base);
+        }
+    }
+    if (calls != 30) std::abort();
     VirtualFree(base, 0, MEM_RELEASE);
     std::puts("FPS prototype defaults preserve pacing; experimental mode preserves callback fields");
 }

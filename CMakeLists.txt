@@ -39,7 +39,7 @@ set(CRACKDOWN_SOURCES
 
 option(CRACKDOWN_BUILD_EXPERIMENTS "Include opt-in camera and unvalidated FPS pacing experiments" OFF)
 if(CRACKDOWN_BUILD_EXPERIMENTS)
-    list(APPEND CRACKDOWN_SOURCES src/camera_options.cpp experiments/fps60.cpp)
+    list(APPEND CRACKDOWN_SOURCES src/camera_options.cpp experiments/fps60.cpp experiments/timing_trace.cpp experiments/native_timing.cpp)
 endif()
 
 # Include generated code if codegen has been run
@@ -78,6 +78,9 @@ target_precompile_headers(crackdown PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generat
 option(CRACKDOWN_BUILD_TESTS "Build Crackdown regression tests" OFF)
 if(CRACKDOWN_BUILD_TESTS)
     enable_testing()
+    add_executable(crackdown_frame_pacing_tests tests/frame_pacing_test.cpp)
+    target_include_directories(crackdown_frame_pacing_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME frame_pacing COMMAND crackdown_frame_pacing_tests)
     add_test(NAME benchmark_routes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py")
     add_test(NAME xui_packages
@@ -99,6 +102,10 @@ if(CRACKDOWN_BUILD_TESTS)
         target_include_directories(crackdown_fps60_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
         target_link_libraries(crackdown_fps60_tests PRIVATE rex::runtime)
         add_test(NAME fps60_experiment_guards COMMAND crackdown_fps60_tests)
+        add_executable(crackdown_native_timing_tests experiments/native_timing_tests.cpp experiments/native_timing.cpp)
+        target_include_directories(crackdown_native_timing_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
+        target_link_libraries(crackdown_native_timing_tests PRIVATE rex::runtime)
+        add_test(NAME native_timing_hooks COMMAND crackdown_native_timing_tests)
         add_executable(crackdown_graphics_options_tests tests/graphics_options_tests.cpp src/graphics_options.cpp)
         target_include_directories(crackdown_graphics_options_tests PRIVATE src generated)
         target_link_libraries(crackdown_graphics_options_tests PRIVATE rex::runtime)
@@ -150,14 +157,20 @@ if(CRACKDOWN_BUILD_TESTS)
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                     --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties(camera_snapshot PROPERTIES TIMEOUT 60)
+        add_test(NAME native_timing
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_timing_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(native_timing PROPERTIES TIMEOUT 60)
     endif()
     add_custom_target(crackdown_check
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-        DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_enumeration_tests crackdown_pack_fix
+        DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_enumeration_tests crackdown_pack_fix crackdown_frame_pacing_tests
         USES_TERMINAL
     )
     if(WIN32)
         add_dependencies(crackdown_check crackdown_fps60_tests)
+        add_dependencies(crackdown_check crackdown_native_timing_tests)
         add_dependencies(crackdown_check crackdown_graphics_options_tests)
         add_dependencies(crackdown_check crackdown_automation_tests)
         add_dependencies(crackdown_check crackdown_controller_backend_tests)

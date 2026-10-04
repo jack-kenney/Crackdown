@@ -1,8 +1,10 @@
 # Crackdown TU0 high frame rate investigation
 
-Status, 2026-10-04: the presentation limiter has been identified and an isolated
-prototype increases submissions, but it also accelerates gameplay. The normal
-build stays at its original pacing. This is not a playable 60 FPS patch.
+Status, 2026-10-04: the [native timestep prototype](#native-timestep-prototype)
+now measures about 59.5 guest FPS with near-baseline walking speed. Jump physics
+and other timing-dependent systems still need validation. The normal build stays
+at its original pacing. The initial pacing-only experiment below is retained as
+a negative control: it accelerates gameplay.
 
 `fps60.cpp` is excluded from the default build. Only an isolated build configured
 with `CRACKDOWN_BUILD_EXPERIMENTS=ON` includes it. Its
@@ -146,7 +148,7 @@ before replacing constants globally. At least one 1/30 use converts a frame coun
 to elapsed seconds (`0x82265C70`), so global replacement could alter frame-count
 metadata independently of simulation cadence.
 
-## Next experiment
+## Original follow-up plan (superseded by native timing work below)
 
 Next steps:
 
@@ -160,7 +162,132 @@ Next steps:
 4. Check heavy-area CPU/GPU capacity at 720p and 1440p once behavior matches the
    30 FPS baseline. Validate loading, cutscenes, audio synchronization, and saves.
 
-`fps60_tests.cpp` passes ten native cases covering the disabled default, preserved
+`fps60_tests.cpp` originally covered ten cases for the disabled default, preserved
 callback fields (including the 64-bit high word), and intervals zero/one/three/15
 remaining unchanged. It checks the prototype's guard behavior, not gameplay
 correctness. Keep any further FPS experiments out of the stable executable.
+
+## Native timestep prototype
+
+Build separately with `./build-local.ps1 -Experiments`. The executable is
+`out/build/win-amd64-experiments/crackdown.exe`. Add `--native_frame_rate=60`
+to an otherwise normal launch, retaining `--vsync=true`. Other accepted targets
+are `120`, `144`, and `240`; `0` keeps original behavior. These are pacing targets,
+not guarantees of achievable performance. Use a copied test profile through
+`--user_data_root`, because gameplay correctness is still under investigation.
+The native option takes precedence over the older pacing-only flag. None of
+these hooks are included in the normal executable or launcher.
+
+The prototype activates existing elapsed-time machinery rather than returning
+an arbitrary fixed 1/60 from the delta getter:
+
+- Engine `BE32[0x82DE25C0]`, byte `+13`, selects fixed timing. Clearing it and
+  setting minimum/maximum milliseconds at `+40/+44` to `1/100` lets timer
+  `0x823263D8` use the kernel millisecond clock. The default branch overwrites
+  both limits with 33 every call.
+- Commit `0x82326348` publishes elapsed milliseconds at `0x82D99128` and the
+  native-time flag at `0x82DE3FB0`. It advances committed time by the consumed
+  delta, retaining residual time after a capped update. Large gaps have their
+  own original 2000 ms discard behavior, retained by the hook.
+- Getter `0x8254C568` consumes that native delta. Havok independently selects
+  the same milliseconds in `0x8248F210`, then calls `0x82492118`,
+  `0x82980AE0`, and simulation step `0x829BD048`. Hooking only the getter would
+  leave physics at 33 ms.
+- Main loop `0x826A7698` overwrites the timer output with scaled 1/30 before
+  `0x826A6B50`. The prototype corrects that specific call's incoming delta,
+  preserving its original scale at `0x82CFE4B4`.
+- Immediate presentation clears only interval bits 8..11 of `0x826BC3D0`'s
+  callback argument. Raw D3D enum zero means one vblank; raw `0x80000000`
+  means immediate. The callback uses encoded interval zero for immediate.
+  Cap word `0x82BAA330=1001` produces an integer sleep budget of zero; writing
+  zero to this word would trap. The SDK guest vblank remains at 60 Hz.
+- A host steady-clock deadline paces the timer at the selected target. It
+  retains cadence through small oversleeps and resets after missed slots.
+  Zero native deltas receive up to three 1 ms retries of the actual timer.
+  If zero persists, a warning is logged and the core update is skipped through
+  engine pause byte `+14`; housekeeping remains active.
+- Native mode otherwise stops engine frame counter `+16`. Some consumers
+  schedule exact-equality deadlines such as counter+60. The prototype keeps a
+  logical 30 Hz counter from unpaused elapsed time, advancing at most one index
+  per update and retaining backlog so deadlines cannot be skipped. This needs
+  extended loading, pause, save, and mission testing.
+
+### Measured behavior
+
+Windows, ReXGlue 0.10.0, 720p, original AA, 4x filtering, original lighting,
+VSync enabled, no graphics overlay. Each instance used its own copied profile.
+Measurements count guest submissions, not physical monitor presentations.
+
+First, reversible live changes tested the native timer without the compiled
+update/counter/pacer hooks. One-second forward input followed by two seconds of
+settling gave these camera displacements:
+
+| Mode | Guest FPS | Displacement |
+|---|---:|---:|
+| Original | 29.99 | 7.395 |
+| Native timing, original pacing | 29.99 | 7.448 |
+| Native timing, immediate, cap 60 | 57.66 | 7.623 |
+| Native timing, immediate, cap 120 | 58.32 | 7.578 |
+| Native timing, immediate, cap 1001 | 60.66 | 7.451 |
+| Original restored | 29.99 | 7.438 |
+
+The earlier pacing-only patch moved 14.023 units. This establishes a substantial
+correction of the approximately doubled walking speed, with input sampling and
+camera settling still contributing measurement variation.
+
+Direct physics position is `float3[BE32[player+292]+288]`, where
+`player=BE32[0x82DE3F3C]`. Do not read its fourth padding lane as a coordinate.
+For a 0.12-second A press, the original jump peaked at 1.7167 units and landed
+after 1.1819 seconds. Native timing peaked at 1.6660 and landed after 1.1501;
+restoring original timing gave 1.7167 and 1.1882. The roughly 3% height difference
+is unresolved; smaller variable physics steps may change numerical integration,
+and input polling can also affect the result.
+
+The compiled prototype then booted through profile selection and the campaign
+movie into the garage. A ten-second direct-position walk/return/jump test gave:
+
+| Target | Guest FPS | Logical counter Hz | Walk distance | Jump height | Landing time |
+|---|---:|---:|---:|---:|---:|
+| 60 | 59.48 | 29.89 | 7.312 | 1.6614 | 1.1538 s |
+| 240 | 59.49 | 29.99 | 7.256 | 1.6566 | 1.1591 s |
+
+The 240 target reached about 240 updates/s in menus. Garage gameplay remained
+around 56–61 FPS. A five-second CPU sample used about 0.92 core on the main guest
+thread; GPU utilization was approximately 32%. Main-thread instrumented event
+waits accounted for only about 6% of wall time in a nearby ten-second window.
+This points toward CPU work rather than a universal 60 Hz presentation cap,
+but stack sampling is needed to identify the actual expensive routines.
+120/144 targets pass pacing-policy tests but have not had separate gameplay runs.
+
+One-second traces show clock commits and main updates consuming approximately
+one second of simulation time per real second. Optional
+`--timing_trace_path=<absolute CSV path>` aggregates getter calls by caller and
+thread, main updates, commits, sleep requests, actual sleeps, event waits, and
+raw presentation enums. Wait durations are charged when a wait returns, so a
+long wait can span several reporting windows; do not interpret its row as that
+window's utilization. Tracing adds overhead and should be disabled for final
+performance comparisons.
+
+Local raw outputs are under `out/timing/session-20261004-172141`,
+`out/timing/native-60-20261004-173952`, and
+`out/timing/native-240-20261004-174240`. The aborted early menu-only matrix is
+excluded from the gameplay results.
+
+### Remaining work and regression coverage
+
+Before promoting this mode, check vehicle acceleration/braking, weapon cadence,
+animation, mission timers, pause/resume, save/reload, cutscene/audio sync, and a
+heavy city route. Audit direct 1/30 consumers and frame-indexed work. The native
+getter ignores the fixed branch's scale at `0x82C63578`, so slow-motion and other
+time-scale behavior also remain unverified. Persistent zero-delta housekeeping
+and logical-counter behavior require more coverage. A fixed physics step with
+render interpolation may be needed if variable steps cannot preserve behavior.
+
+`native_timing_test.py` executes 15 actual generated timer/getter routines with
+deterministic kernel-clock data, including residual accounting, min/max limits,
+zero skips, wraparound, large gaps, and register preservation. Separate native
+hook tests cover bounded retries, callsite guards, scale handling, pause, and
+logical deadlines. Presentation tests preserve unrelated callback fields for
+all four targets; pure deadline-policy tests cover stalls and cadence. All 18
+CTest checks passed. These tests establish hook mechanics, not full gameplay
+correctness.
