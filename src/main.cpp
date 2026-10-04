@@ -10,19 +10,24 @@
 #include <rex/rex_app.h>
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/graphics/flags.h>
+#include <rex/graphics/graphics_system.h>
 
 #include "cache.h"
 #include "controller_input.h"
+#include "graphics_options.h"
 #ifdef _WIN32
 #include "automation.h"
 #include "timer_resolution.h"
-#include <rex/graphics/graphics_system.h>
 #endif
 
-REXCVAR_DEFINE_BOOL(fix_lighting, false, "Game Enhancements", "Fix lighting calculation, currently halves FPS but improves visibility and color/brightness accuracy.");
-REXCVAR_DEFINE_BOOL(fix_light_occlusion, true, "Game Enhancements", "Fix light source coronas being visible through walls.");
-REXCVAR_DEFINE_BOOL(misc_performance_improvements, false, "Game Enhancements", "Disables bloom and shadows to potentially improve performance.");
-REXCVAR_DEFINE_BOOL(show_perfgraph, false, "Game Enhancements", "Show FPS counter in the top right and performance graph in the left half of the screen.");
+REXCVAR_DEFINE_BOOL(fix_lighting, false, "Game Enhancements", "Fix lighting calculation; improves visibility and color accuracy at a substantial performance cost (restart required).")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_BOOL(fix_light_occlusion, true, "Game Enhancements", "Disable light coronas to prevent halos appearing through walls (restart required).")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_BOOL(misc_performance_improvements, false, "Game Enhancements", "Disable bloom and shadows to potentially improve performance (restart required).")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_BOOL(show_perfgraph, false, "Game Enhancements", "Show the guest FPS counter and performance graph (restart required).")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 #ifdef _WIN32
 REXCVAR_DEFINE_BOOL(automation, false, "Debug", "Enable local automated controller input and guest frame capture for testing.");
 REXCVAR_DEFINE_BOOL(high_resolution_timer, true, "Performance", "Request 1 ms Windows timer precision for runtime waits (restart required).")
@@ -105,13 +110,15 @@ public:
         if (REXCVAR_GET(misc_performance_improvements))
         {
             // Performance-improving commands
-            *reinterpret_cast<bool*>(membase + 0x82BAA3AA) = true; // "togglebloom" command.
+            *reinterpret_cast<bool*>(membase + 0x82BAA3AA) = false; // "togglebloom" command: zero skips the bloom pass.
             *reinterpret_cast<bool*>(membase + 0x82DE25B3) = false; // Disable shadows.
         }
+        ApplyGraphicsOptions(static_cast<rex::graphics::GraphicsSystem*>(runtime()->graphics_system()), membase);
     }
 
     void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override
     {
+        ApplyLaunchWindowOptions(window());
 #ifdef _WIN32
         if (automation_) {
             auto* graphics = static_cast<rex::graphics::GraphicsSystem*>(runtime()->graphics_system());

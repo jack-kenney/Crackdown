@@ -9,7 +9,8 @@ This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crack
 | Area | Available now |
 | --- | --- |
 | Campaign | Solo gameplay, movement, shooting, camera controls and driving have been exercised. Hands-on play reports stable frame rate and working sound. |
-| Rendering | Original 1280×720 or 2560×1440 internal rendering, using the original game assets. |
+| Rendering | Original 1280×720 or 2560×1440 internal rendering, optional FXAA, and experimental 3840×2160 rendering, using the original game assets. |
+| Launcher | Saved Windows graphics, FPS/performance overlay, startup, audio buffer and controller settings. |
 | Audio | Fixes for silent movies, mixer stalls and audio disappearing after gunfire. Launchers reduce the measured runtime queue delay from about 340 ms to about 40 ms. |
 | Controller | SDL controller support with rumble; tested with an OEM wired Xbox 360 controller over USB. Optional direct XInput polling is available for comparison. |
 | Startup | Microsoft and Realtime Worlds movies skip by default. Campaign cutscenes remain available. |
@@ -19,7 +20,7 @@ The measured performance samples used a Ryzen 7 9800X3D and RTX 5070 Ti on Windo
 
 Publication checks regenerated TU0 code in a clean checkout and passed all nine regression checks with SDK 0.2.2. Gameplay testing remains separate from those automated checks.
 
-Known limits include intermittent startup/sign-in crashes, unverified full-campaign and save/reload reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a dedicated graphics options menu are future work.
+Known limits include intermittent startup/sign-in crashes, unverified full-campaign and save/reload reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a custom in-game graphics menu are future work.
 
 ## Requirements
 
@@ -67,10 +68,34 @@ For normal play, use one of the included launchers:
 
 | Launcher | Internal rendering | Log |
 | --- | --- | --- |
+| `Launch-Crackdown.cmd` | Configurable; defaults to 2560×1440 | `out/launcher-game.log` |
 | `Play-Crackdown.cmd` | 1280×720 | `out/crackdown.log` |
 | `Play-Crackdown-1440p.cmd` | 2560×1440 | `out/crackdown-1440p.log` |
 
-Both launchers use the extracted `assets` directory, store user data in `out/userdata`, and select an eight-block audio queue to reduce playback delay. Launching the executable directly retains the SDK's 64-block default unless `--audio_maxqframes=8` is supplied. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
+The launchers use the extracted `assets` directory, store user data in `out/userdata`, and default to an eight-block audio queue to reduce playback delay. Launching the executable directly retains the SDK's 64-block default unless `--audio_maxqframes=8` is supplied. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
+
+## Windows settings launcher
+
+Double-click `Launch-Crackdown.cmd` after building. It opens a Windows settings window with Graphics and Game & audio tabs. Choose your options and select **Launch game**; **Save settings** stores them without starting the game. Settings apply to the next session and are saved in `out/launcher-settings.json`. The executable defaults to the standard Release build; **Browse** can select a different build. Windows PowerShell 5.1 and Windows Forms are sufficient; no Python packages are required for this launcher.
+
+| Setting | Choices and behavior |
+| --- | --- |
+| Render resolution | 720p, 1440p (default), or 4K (experimental). Changes internal rendering independently of window size. |
+| Anti-aliasing | Original rendering (default), FXAA, or higher quality FXAA. Uses the SDK's final-image filter; does not replace the game's textures. |
+| Fullscreen | Borderless fullscreen or a window (default). |
+| Bloom / shadows | Independent disable switches; both retain original game behavior by default. |
+| Lighting accuracy fix | Enables GPU resolve readback to improve visibility and color accuracy. Off by default because it can substantially reduce frame rate. |
+| Light halos | Hide coronas that appear through walls (default). This disables those coronas rather than adding geometric occlusion. |
+| FPS / performance graph | The game's diagnostic FPS display, or that display with its performance graph. Off by default. |
+| Startup movies | Skip the Microsoft and Realtime Worlds movies (default); campaign cutscenes remain available. |
+| Audio buffering | 8 blocks (default, ~43 ms capacity), 16 (~85 ms), or 64 (~341 ms). |
+| Controller polling | Standard SDL (default) or direct XInput for Xbox controllers. |
+
+VSync and the Windows timer precision request retain the tested timing settings. Changing these options requires a new game session. The launcher does not change an already running game.
+
+Equivalent command-line flags include `--show_fps=true`, `--show_perfgraph=true`, `--disable_bloom=true`, `--disable_shadows=true`, `--fix_lighting=true`, `--fix_light_occlusion=false`, `--postprocess_antialiasing=fxaa` (or `fxaa_extreme`), and `--fullscreen=true`. The legacy `--misc_performance_improvements=true` disables both bloom and shadows; its inherited bloom write has been corrected so zero actually skips TU0's bloom pass.
+
+Launcher validation exercises saved settings, invalid-setting rejection, Windows command-line quoting, and the actual Save/Launch buttons. Separate runtime checks captured 1440p gameplay with the FPS display and FXAA, and 4K output with higher quality FXAA. 4K remains experimental; those checks do not establish sustained city/combat performance.
 
 ## Rendering resolution
 
@@ -154,7 +179,7 @@ The Windows automation regression test checks controller-state byte order, butto
 
 ## Windows audio diagnostics
 
-ReXGlue 0.2.2 defaults to 64 queued blocks of 256 samples at 48 kHz. A full queue holds approximately 341 ms of already mixed audio, delaying newly mixed gunshots and movie audio. Both repository launchers use `--audio_maxqframes=8`, reducing this capacity to approximately 43 ms without changing the decoder, mixer, sample rate or SDL callback size. This setting must be supplied at startup; restart to change it. For a direct launch:
+ReXGlue 0.2.2 defaults to 64 queued blocks of 256 samples at 48 kHz. A full queue holds approximately 341 ms of already mixed audio, delaying newly mixed gunshots and movie audio. The repository launchers default to `--audio_maxqframes=8`, reducing this capacity to approximately 43 ms without changing the decoder, mixer, sample rate or SDL callback size. This setting must be supplied at startup; restart to change it. For a direct launch:
 
 ```powershell
 out\build\win-amd64-release\crackdown.exe assets --audio_maxqframes=8
@@ -162,7 +187,7 @@ out\build\win-amd64-release\crackdown.exe assets --audio_maxqframes=8
 
 Diagnostic callback timestamps on the tested Windows stereo device measured median mixer-submission-to-SDL-callback residence of 339.9 ms with 64 blocks and 39.5 ms with eight. A 60-second 1440p gameplay sample exercised repeated shots, weapon switching, movement and camera rotation: all 11,250 callbacks contained nonzero finite audio, with no empty-queue callbacks, and p95 residence was 49.3 ms. Separate intro and campaign-movie samples also had no empty-queue or nonfinite callbacks. Diagnostic instrumentation was confined to a separate executable; the launchers use the existing SDK implementation.
 
-These measurements cover the runtime queue, not physical button-to-speaker latency, Windows/device buffering, perceptual movie sync or extended city combat. If a different system develops crackles, try `--audio_maxqframes=16` (approximately 85 ms capacity) or restore `64` for comparison by editing the launcher or launching the executable directly with that value. Do not change the live SDK setting in the overlay: existing semaphore limits are established during startup.
+These measurements cover the runtime queue, not physical button-to-speaker latency, Windows/device buffering, perceptual movie sync or extended city combat. If a different system develops crackles, select more buffering in the settings launcher, try `--audio_maxqframes=16` (approximately 85 ms capacity), or restore `64` for comparison. Do not change the live SDK setting in the overlay: existing semaphore limits are established during startup.
 
 If sound is missing, inspect the game's actual Windows audio session while it is running:
 

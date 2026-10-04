@@ -40,6 +40,7 @@ set(CRACKDOWN_SOURCES
     src/audio_spatial.cpp
     src/controller_input.cpp
     src/startup_movies.cpp
+    src/graphics_options.cpp
 )
 
 # Include generated code if codegen has been run
