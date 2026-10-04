@@ -3,9 +3,11 @@ param(
     [switch]$Regenerate,
     [switch]$TestOnly,
     [switch]$Experiments,
+    [switch]$PerformanceTest,
     [ValidateRange(1, 64)][int]$Jobs = 8
 )
 $ErrorActionPreference = 'Stop'
+if ($PerformanceTest) { $Experiments = $true }
 if (-not $SdkPath) { $SdkPath = Join-Path $PSScriptRoot '../.tools/rexglue-v0.10.0/win-amd64' }
 $SdkPath = (Resolve-Path -LiteralPath $SdkPath).Path
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -34,7 +36,8 @@ try {
     $buildDirectory = Join-Path $PSScriptRoot 'out/build/win-amd64-release'
     if ($Experiments) { $buildDirectory = Join-Path $PSScriptRoot 'out/build/win-amd64-experiments' }
     $experimentOption = if ($Experiments) { 'ON' } else { 'OFF' }
-    & $cmake --preset win-amd64-release -B $buildDirectory "-DCMAKE_PREFIX_PATH=$SdkPath" -DCRACKDOWN_BUILD_TESTS=ON "-DCRACKDOWN_BUILD_EXPERIMENTS=$experimentOption"
+    $executableName = if ($PerformanceTest) { 'crackdown-performance' } else { 'crackdown' }
+    & $cmake --preset win-amd64-release -B $buildDirectory "-DCMAKE_PREFIX_PATH=$SdkPath" -DCRACKDOWN_BUILD_TESTS=ON "-DCRACKDOWN_BUILD_EXPERIMENTS=$experimentOption" "-DCRACKDOWN_EXECUTABLE_NAME=$executableName"
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
     & $cmake --build $buildDirectory --target crackdown_check --parallel $Jobs
     if ($LASTEXITCODE -ne 0) { throw 'Regression checks failed.' }

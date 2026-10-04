@@ -28,7 +28,7 @@ struct Trace {
     using Key = std::tuple<const char*, uint32_t, std::thread::id>;
     std::map<Key, Aggregate> rows;
     Trace() : output(REXCVAR_GET(timing_trace_path)) {
-        output << "seconds,kind,caller,thread,calls,sum,minimum,maximum,fixed,variable,delta_ms,min_ms,max_ms,engine_frames\n";
+        output << "seconds,kind,caller,thread,calls,sum,minimum,maximum,fixed,variable,delta_ms,min_ms,max_ms,engine_frames,residual_ms,discarded_ms\n";
     }
 };
 void Record(const char* kind, uint32_t caller, double dt, uint8_t* base, bool flush = false) {
@@ -52,7 +52,9 @@ void Record(const char* kind, uint32_t caller, double dt, uint8_t* base, bool fl
             << unsigned(REX_LOAD_U8(0x82DE3FB0)) << ',' << REX_LOAD_U32(0x82D99128) << ','
             << (engine ? REX_LOAD_U32(engine+40) : 0) << ','
             << (engine ? REX_LOAD_U32(engine+44) : 0) << ','
-            << (engine ? REX_LOAD_U32(engine+16) : 0) << '\n';
+            << (engine ? REX_LOAD_U32(engine+16) : 0) << ','
+            << (engine ? uint32_t(REX_LOAD_U32(engine+20) - REX_LOAD_U32(engine+36)) : 0) << ','
+            << (engine ? REX_LOAD_U32(engine+64) : 0) << '\n';
     }
     trace.output.flush(); trace.rows.clear(); trace.last = now;
 }

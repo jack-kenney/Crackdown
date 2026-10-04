@@ -193,7 +193,8 @@ an arbitrary fixed 1/60 from the delta getter:
 - Commit `0x82326348` publishes elapsed milliseconds at `0x82D99128` and the
   native-time flag at `0x82DE3FB0`. It advances committed time by the consumed
   delta, retaining residual time after a capped update. Large gaps have their
-  own original 2000 ms discard behavior, retained by the hook.
+  own original 2000 ms discard behavior. The newer hitch policy below discards
+  excess time before this commit; disabling that policy restores this behavior.
 - Getter `0x8254C568` consumes that native delta. Havok independently selects
   the same milliseconds in `0x8248F210`, then calls `0x82492118`,
   `0x82980AE0`, and simulation step `0x829BD048`. Hooking only the getter would
@@ -260,8 +261,8 @@ The 240 target reached about 240 updates/s in menus. Garage gameplay remained
 around 56–61 FPS. A five-second CPU sample used about 0.92 core on the main guest
 thread; GPU utilization was approximately 32%. Main-thread instrumented event
 waits accounted for only about 6% of wall time in a nearby ten-second window.
-This points toward CPU work rather than a universal 60 Hz presentation cap,
-but stack sampling is needed to identify the actual expensive routines.
+Subsequent stack sampling found the main thread mostly polling graphics progress,
+while the graphics command thread used a core. See the performance work below.
 120/144 targets pass pacing-policy tests but have not had separate gameplay runs.
 
 One-second traces show clock commits and main updates consuming approximately
@@ -293,6 +294,137 @@ deterministic kernel-clock data, including residual accounting, min/max limits,
 zero skips, wraparound, large gaps, and register preservation. Separate native
 hook tests cover bounded retries, callsite guards, scale handling, pause, and
 logical deadlines. Presentation tests preserve unrelated callback fields for
-all four targets; pure deadline-policy tests cover stalls and cadence. All 18
-CTest checks passed. These tests establish hook mechanics, not full gameplay
+all four targets; pure deadline-policy tests cover stalls and cadence. The current
+suite passes all 23 CTest checks. These tests establish hook mechanics, not full gameplay
 correctness.
+
+## Performance test build
+
+Build with `./build-local.ps1 -PerformanceTest`, then double-click
+`Play-Crackdown-Performance-Test.cmd`. This uses the same experimental object
+files but links `out/build/win-amd64-experiments/crackdown-performance.exe`, so an
+existing `crackdown.exe` session can remain open. Close the performance-test game
+before rebuilding that filename.
+
+The launcher retains saved graphics preferences and defaults to a 60 FPS target.
+On first launch it copies `out/userdata-fps-experimental` (or `out/userdata` if
+absent) into `out/userdata-performance-test`. Later runs retain that test profile.
+Its log is `out/performance-test-game.log`. Optional arguments:
+
+```powershell
+./Play-Crackdown-Performance-Test.cmd -FrameRate 120 -VehicleLod1Distance 15
+```
+
+| Flag | Behavior in this launcher |
+|---|---|
+| `native_frame_rate=60` | Elapsed-time gameplay; also accepts 120, 144 and 240 as pacing targets. |
+| `native_discard_hitch_time=true` | Preserves intervals through 50 ms; discards older stall time. |
+| `pace_gpu_wait=true` | Adds a bounded host wait to the profiled graphics progress loop. |
+| `fix_guest_event_clear=true` | Synchronizes the stream worker's native events with guest clears; effective mode is fixed for the process lifetime. |
+| `vehicle_lod1_distance=0` | Retains the game's mesh distances. Try 15 or 20 meters to trade vehicle detail for rendering cost. |
+
+All hooks remain excluded from the standard build. GPU wait pacing, event
+synchronization and vehicle distance overrides are disabled unless requested.
+The hitch policy operates only inside the audited native timer path.
+
+### Hitch recovery
+
+The original capped timer retains excess elapsed time after a stall. A controlled
+250 ms suspension of an owned test instance's main thread produced three
+consecutive 100 ms simulation steps, matching the reported burst of movement.
+The new policy retains one step of at most 50 ms, records discarded time in the
+original accounting fields, and moves the committed wall-clock cursor forward.
+The same injected pause then produced 50, 17, 17, 16, 16 ms updates with no
+remaining debt. Normal 16/17 and 33/34 ms updates keep their full elapsed time.
+
+This deliberately loses simulation time during severe stalls. It does not remove
+the stall or the single larger recovery step, and does not add physics substeps.
+Set `--native_discard_hitch_time=false` at launch for an original-policy comparison.
+The trace now includes residual and discarded milliseconds. Logical 30 Hz frame
+bookkeeping also resets its fractional phase when the game independently resets
+its frame counter, including paused transitions, while retaining normal wrap.
+
+### Graphics polling and event synchronization
+
+Four of five main-thread stack samples in the garage landed in the graphics
+progress path `826BBEE0 -> 826BB4F0 -> 826BCA98`. The helper's Xenon delay hints
+are emitted as comments by code generation. The optional wrapper checks the
+original pending-progress condition and, after 256 unsuccessful polls, waits
+50 microseconds using a Windows high-resolution waitable timer. It preserves the
+original timeout path, return value and guest registers.
+
+With event synchronization held enabled, the same stationary 1440p garage view
+gave the following six-second samples. Original AA, 4x filtering, lighting fix
+enabled, 60 FPS target; timing tracing enabled equally in each sample:
+
+| GPU polling | Guest FPS | Main-thread core use | Total core use |
+|---|---:|---:|---:|
+| Backoff enabled | 55.16 | 0.18 | 1.59 |
+| Original polling | 55.00 | 0.97 | 2.38 |
+| Backoff enabled again | 53.00 | 0.18 | 1.61 |
+
+This demonstrates reduced CPU spinning, without an established throughput gain.
+The graphics command thread still used approximately one core. These are
+exploratory submission measurements: another user game remained open, and this
+is not a controlled whole-system or heavy-city benchmark.
+
+The separate stream worker clears guest event headers through `82A4FA70`, but
+the SDK's initialized native event may remain signaled. The fix clears the
+native event only at four audited worker call sites, preserving the original
+guest store. Tests exercise real SDK manual- and auto-reset events, caller and
+initialization guards, and both cold-start modes. Disabling the prototype live
+caused a null stream-object query after several seconds; stale completion
+signals can re-mark a freed stream as completed. This is the likely mechanism,
+not a debugger-confirmed complete causal trace. The effective option is now
+immutable after first use; compare separate launches rather than live toggles.
+
+A fresh-launch comparison in the initial garage view held GPU backoff enabled,
+disabled timing tracing, and used the same 25 m vehicle threshold. Guest FPS was
+57.16–58.00 with synchronization off and about 60.50 with it on. Total CPU use
+was 2.49–2.54 cores versus 1.46–1.53. The off-mode worker alone consumed
+0.97–0.99 core; its stacks repeatedly entered `8225C538` through
+`KeWaitForMultipleObjects`. The CPU reduction supports correcting the stale
+native signal; the small FPS change remains subject to background-load noise.
+The enabled build also remained responsive through repeated pistol fire,
+reload, jump and walking input. Its Windows audio-session meter was nonzero in
+all 120 samples over 12 seconds after firing (peak 0.706). That process was
+muted in Windows, so this verifies continued audio production rather than
+audible quality or synchronization.
+
+### Vehicle mesh distance
+
+`vehicle_lod1_distance` uses TU0's shipped `SetVehicleLod1DistOveride` setting.
+The profiled game's override was already enabled at 25 meters. Lowering it changes
+only the first vehicle mesh transition through the original selector `823B6518`;
+later mesh thresholds, fade behavior, missing-mesh fallback and population stay
+under the game's control. The selector measures distance to the transformed
+bounding box, rather than the vehicle center. Values from 0 through 100 are
+accepted; 0 preserves the existing setting, and the override caps the native
+first threshold rather than extending it beyond that threshold.
+
+Two stationary garage comparisons changed only the native distance setting,
+restoring it afterward. Each cell is a six-second guest-submission sample:
+
+| Comparison | Original 25 m | 15 m | Restored 25 m |
+|---|---:|---:|---:|
+| First | 53.66 FPS | 58.50 FPS | 53.83 FPS |
+| Repeat | 55.00 FPS | 60.16 FPS | 55.50 FPS |
+
+Read-only inspection of the renderer's selected mesh indices confirmed that
+two full-detail vehicles entered their first blend and three blended vehicles
+became mesh 1 only. This supports the measured direction of change, but neither
+these short garage samples nor their approximately 8–9% difference establish a
+city-route gain. The default remains unchanged until the visual tradeoff has
+been evaluated in traffic. No pedestrian distance option is exposed yet.
+`CrowdCarsFarCull` removes objects and changes population behavior; it is not a
+substitute for render-only mesh control. Other named crowd LOD commands and
+PerformanceScaler entries did not provide an audited active renderer path.
+
+Local raw observations are under `out/performance/session-20261004-180953` and
+`out/performance/fixed-20261004-183818`; fresh-launch event comparisons are in
+`out/performance/cold-false-true-20261004-184700` and
+`out/performance/cold-true-true-20261004-185230`. The latter also verified that
+the compiled vehicle hook installs the requested 15 m value at startup; its
+event-comparison samples temporarily restored 25 m. Menu/movie-only samples
+are explicitly excluded. These logs, captures, generated guest
+code and game assets are excluded from Git.

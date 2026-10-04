@@ -39,7 +39,7 @@ set(CRACKDOWN_SOURCES
 
 option(CRACKDOWN_BUILD_EXPERIMENTS "Include opt-in camera and unvalidated FPS pacing experiments" OFF)
 if(CRACKDOWN_BUILD_EXPERIMENTS)
-    list(APPEND CRACKDOWN_SOURCES src/camera_options.cpp experiments/fps60.cpp experiments/timing_trace.cpp experiments/native_timing.cpp)
+    list(APPEND CRACKDOWN_SOURCES src/camera_options.cpp experiments/fps60.cpp experiments/timing_trace.cpp experiments/native_timing.cpp experiments/vehicle_lod.cpp experiments/gpu_wait.cpp experiments/event_clear.cpp)
 endif()
 
 # Include generated code if codegen has been run
@@ -58,6 +58,12 @@ if(WIN32)
 else()
     add_executable(crackdown ${CRACKDOWN_SOURCES})
 endif()
+
+set(CRACKDOWN_EXECUTABLE_NAME "crackdown" CACHE STRING "Executable name for isolated test builds")
+if(NOT CRACKDOWN_EXECUTABLE_NAME MATCHES "^[A-Za-z0-9_-]+$")
+    message(FATAL_ERROR "CRACKDOWN_EXECUTABLE_NAME must be a filename without extension")
+endif()
+set_target_properties(crackdown PROPERTIES OUTPUT_NAME "${CRACKDOWN_EXECUTABLE_NAME}")
 
 target_include_directories(crackdown PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -81,6 +87,12 @@ if(CRACKDOWN_BUILD_TESTS)
     add_executable(crackdown_frame_pacing_tests tests/frame_pacing_test.cpp)
     target_include_directories(crackdown_frame_pacing_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME frame_pacing COMMAND crackdown_frame_pacing_tests)
+    add_executable(crackdown_timestep_policy_tests tests/timestep_policy_test.cpp)
+    target_include_directories(crackdown_timestep_policy_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME timestep_policy COMMAND crackdown_timestep_policy_tests)
+    add_executable(crackdown_gpu_wait_tests tests/gpu_wait_test.cpp)
+    target_include_directories(crackdown_gpu_wait_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME gpu_wait_policy COMMAND crackdown_gpu_wait_tests)
     add_test(NAME benchmark_routes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py")
     add_test(NAME xui_packages
@@ -106,6 +118,11 @@ if(CRACKDOWN_BUILD_TESTS)
         target_include_directories(crackdown_native_timing_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
         target_link_libraries(crackdown_native_timing_tests PRIVATE rex::runtime)
         add_test(NAME native_timing_hooks COMMAND crackdown_native_timing_tests)
+        add_executable(crackdown_event_clear_tests tests/event_clear_tests.cpp)
+        target_include_directories(crackdown_event_clear_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
+        target_link_libraries(crackdown_event_clear_tests PRIVATE rex::runtime)
+        add_test(NAME guest_event_clear COMMAND crackdown_event_clear_tests)
+        add_test(NAME guest_event_clear_disabled COMMAND crackdown_event_clear_tests --disabled)
         add_executable(crackdown_graphics_options_tests tests/graphics_options_tests.cpp src/graphics_options.cpp)
         target_include_directories(crackdown_graphics_options_tests PRIVATE src generated)
         target_link_libraries(crackdown_graphics_options_tests PRIVATE rex::runtime)
@@ -162,15 +179,21 @@ if(CRACKDOWN_BUILD_TESTS)
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                     --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties(native_timing PROPERTIES TIMEOUT 60)
+        add_test(NAME vehicle_lod
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vehicle_lod_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(vehicle_lod PROPERTIES TIMEOUT 60)
     endif()
     add_custom_target(crackdown_check
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
-        DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_enumeration_tests crackdown_pack_fix crackdown_frame_pacing_tests
+        DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_enumeration_tests crackdown_pack_fix crackdown_frame_pacing_tests crackdown_timestep_policy_tests crackdown_gpu_wait_tests
         USES_TERMINAL
     )
     if(WIN32)
         add_dependencies(crackdown_check crackdown_fps60_tests)
         add_dependencies(crackdown_check crackdown_native_timing_tests)
+        add_dependencies(crackdown_check crackdown_event_clear_tests)
         add_dependencies(crackdown_check crackdown_graphics_options_tests)
         add_dependencies(crackdown_check crackdown_automation_tests)
         add_dependencies(crackdown_check crackdown_controller_backend_tests)

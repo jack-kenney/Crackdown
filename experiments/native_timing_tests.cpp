@@ -12,14 +12,17 @@
 REX_EXTERN(sub_823263D8);
 REX_EXTERN(sub_82325850);
 REX_EXTERN(sub_82324938);
+REX_EXTERN(sub_823260C8);
 
 namespace {
 constexpr uint32_t engine_address = 0x100000;
 constexpr uint32_t run_address = 0x110001;
 constexpr uint32_t clamp_address = 0x110000;
 constexpr uint32_t delta_address = 0x110008;
-unsigned checks, timer_calls, pause_calls, counter_calls;
+unsigned checks, timer_calls, pause_calls, counter_calls, clock_calls;
 bool expect_native_timer, mutate_timer_context;
+bool timer_samples_clock;
+uint32_t clock_sample_ms, clock_caller = 0x82326430;
 uint8_t original_pause;
 PPCContext incoming;
 std::array<uint32_t, 4> timer_deltas{};
@@ -61,9 +64,13 @@ void ResetEngine(uint8_t* base) {
     REX_STORE_U32(engine_address + 36, 500);
     REX_STORE_U32(engine_address + 40, 33);
     REX_STORE_U32(engine_address + 44, 33);
+    REX_STORE_U32(engine_address + 64, 0);
+    REX_STORE_U32(engine_address + 60, std::bit_cast<uint32_t>(0.0f));
     REX_STORE_U32(0x82BAA330, 32);
     REX_STORE_U8(0x82DE3FB0, 0);
     REX_STORE_U32(0x82D99128, 0);
+    REX_STORE_U32(0x82D9912C, 0);
+    REX_STORE_U32(0x82DE3F90, 0);
 }
 }
 
@@ -82,7 +89,29 @@ REX_EXTERN(__imp__sub_823263D8) {
         Check(REX_LOAD_U32(0x82BAA330) == 1001, "positive worker divisor");
     }
     Check(delta_index < delta_count, "bounded expected timer calls");
-    const auto dt = timer_deltas[delta_index++];
+    auto dt = timer_deltas[delta_index++];
+    if (timer_samples_clock) {
+        const auto previous_delta = REX_LOAD_U32(0x82D99128);
+        const auto previous_sum = REX_LOAD_U32(0x82D9912C);
+        const auto previous_float_sum = REX_LOAD_U32(engine_address + 60);
+        auto clock_ctx = ctx;
+        clock_ctx.r3.u64 = engine_address;
+        clock_ctx.lr = clock_caller;
+        sub_823260C8(clock_ctx, base);
+        Check(clock_ctx.r3.u64 == 0xaabbccddeeff0011ull &&
+              clock_ctx.r5.u64 == 0x1122334455667788ull &&
+              clock_ctx.lr == 0x89abcdef && clock_ctx.f1.f64 == 123.25,
+              "clock wrapper preserves original output context");
+        Check(REX_LOAD_U32(0x82D99128) == previous_delta &&
+              REX_LOAD_U32(0x82D9912C) == previous_sum &&
+              REX_LOAD_U32(engine_address + 60) == previous_float_sum,
+              "clock discard does not publish simulation output prematurely");
+        const auto elapsed = REX_LOAD_U32(engine_address + 20) - REX_LOAD_U32(engine_address + 36);
+        const auto maximum = REX_LOAD_U32(engine_address + 44);
+        const auto actual_dt = elapsed > maximum ? maximum : elapsed;
+        Check(actual_dt == dt, "timer receives expected elapsed delta after clock wrapper");
+        dt = actual_dt;
+    }
     REX_STORE_U8(ctx.r5.u32, dt != 0);
     REX_STORE_U8(ctx.r4.u32, 0);
     REX_STORE_U32(ctx.r6.u32, std::bit_cast<uint32_t>(float(dt) * 0.001f));
@@ -91,6 +120,9 @@ REX_EXTERN(__imp__sub_823263D8) {
     if (dt) {
         REX_STORE_U32(engine_address + 32, REX_LOAD_U32(engine_address + 32) + dt);
         REX_STORE_U32(engine_address + 36, REX_LOAD_U32(engine_address + 36) + dt);
+        REX_STORE_U32(0x82D9912C, REX_LOAD_U32(0x82D9912C) + dt);
+        const auto previous_float = std::bit_cast<float>(REX_LOAD_U32(engine_address + 60));
+        REX_STORE_U32(engine_address + 60, std::bit_cast<uint32_t>(previous_float + float(dt) * 0.001f));
     }
     if (mutate_timer_context) {
         ctx.r3.u64 = 0xdead;
@@ -98,6 +130,16 @@ REX_EXTERN(__imp__sub_823263D8) {
         ctx.r27.u64 = 0;
         ctx.lr = 0xbad;
     }
+}
+REX_EXTERN(__imp__sub_823260C8) {
+    ++clock_calls;
+    REX_STORE_U32(ctx.r3.u32 + 20, clock_sample_ms);
+    // Deliberately replace the incoming engine/caller registers: the wrapper
+    // must save them before the original and preserve these original outputs.
+    ctx.r3.u64 = 0xaabbccddeeff0011ull;
+    ctx.r5.u64 = 0x1122334455667788ull;
+    ctx.lr = 0x89abcdef;
+    ctx.f1.f64 = 123.25;
 }
 REX_EXTERN(__imp__sub_82325850) {
     ++pause_calls;
@@ -211,6 +253,27 @@ int main() {
     tick(1);
     Check(before_reset >= 33 && REX_LOAD_U32(engine_address + 16) == 0, "engine elapsed reset clears fractional backlog");
     tick(33); Check(REX_LOAD_U32(engine_address + 16) == 1, "reset begins fresh logical cadence");
+    tick(20);
+    REX_STORE_U32(engine_address + 16, 0);
+    tick(20);
+    Check(REX_LOAD_U32(engine_address + 16) == 0,
+          "independent logical counter reset clears old phase with monotonic elapsed clock");
+    tick(14);
+    Check(REX_LOAD_U32(engine_address + 16) == 1,
+          "independent reset counts only new session elapsed time");
+    tick(20);
+    REX_STORE_U32(engine_address + 16, 0);
+    tick(20, true);
+    tick(14);
+    Check(REX_LOAD_U32(engine_address + 16) == 0,
+          "counter reset during pause clears old phase without counting paused time");
+    REX_STORE_U32(engine_address + 16, 0xffffffffu);
+    tick(20);
+    Check(REX_LOAD_U32(engine_address + 16) == 0, "logical counter wraps normally");
+    tick(32);
+    Check(REX_LOAD_U32(engine_address + 16) == 0, "normal wrap retains fractional cadence");
+    tick(1);
+    Check(REX_LOAD_U32(engine_address + 16) == 1, "normal wrap does not falsely clear fractional cadence");
     ctx.lr = 0x12345678;
     tick(100); Check(REX_LOAD_U32(engine_address + 16) == 1, "other counter caller unchanged");
     ctx.lr = 0x826A7940;
@@ -218,7 +281,61 @@ int main() {
     tick(100); Check(REX_LOAD_U32(engine_address + 16) == 2, "fixed mode leaves increment to original");
     Select(0); REX_STORE_U8(engine_address + 13, 0);
     tick(100); Check(REX_LOAD_U32(engine_address + 16) == 2, "disabled native counter unchanged");
-    Check(counter_calls == 260, "counter hook calls original every time");
+    Check(counter_calls == 269, "counter hook calls original every time");
+
+    Check(rex::cvar::SetFlagByName("native_discard_hitch_time", "true"), "enable hitch policy");
+    Select(240);
+    timer_samples_clock = true; mutate_timer_context = false; expect_native_timer = true;
+    ResetEngine(base); incoming = TimerContext(); ctx = incoming;
+    clock_sample_ms = 750; Queue({50});
+    sub_823263D8(ctx, base);
+    Check(REX_LOAD_U32(engine_address + 36) == 750 &&
+          REX_LOAD_U32(engine_address + 32) == 250 && REX_LOAD_U32(engine_address + 64) == 200,
+          "actual clock hook drops stall debt through exact wall-time ledgers");
+    Check(REX_LOAD_U32(0x82D9912C) == 50 && REX_LOAD_U32(0x82D99128) == 50,
+          "actual clock hook leaves only retained simulation time to commit");
+    clock_sample_ms = 767; ctx = incoming; Queue({17});
+    sub_823263D8(ctx, base);
+    Check(REX_LOAD_U32(engine_address + 36) == 767 &&
+          REX_LOAD_U32(engine_address + 64) == 200 && REX_LOAD_U32(0x82D9912C) == 67,
+          "actual clock hook recovery frame has no old acceleration debt");
+
+    // A direct clock call after the native timer returns must not inherit its
+    // thread-local scope, even with the audited clock caller LR.
+    ResetEngine(base); auto clock_ctx = TimerContext();clock_ctx.lr = 0x82326430;
+    clock_sample_ms = 750; sub_823260C8(clock_ctx, base);
+    Check(REX_LOAD_U32(engine_address + 36) == 500 &&
+          REX_LOAD_U32(engine_address + 32) == 0 && REX_LOAD_U32(engine_address + 64) == 0,
+          "clock discard scope ends when native timer returns");
+    Check(clock_ctx.r3.u64 == 0xaabbccddeeff0011ull && clock_ctx.lr == 0x89abcdef,
+          "out-of-scope clock preserves original outputs");
+
+    for (unsigned guard = 0; guard < 4; ++guard) {
+        ResetEngine(base); incoming = TimerContext(); ctx = incoming;
+        REX_STORE_U32(engine_address + 40, 1); REX_STORE_U32(engine_address + 44, 100);
+        clock_sample_ms = 750; clock_caller = 0x82326430;
+        if (guard == 0) {
+            Check(rex::cvar::SetFlagByName("native_discard_hitch_time", "false"), "disable hitch policy for A/B");
+        } else if (guard == 1) {
+            clock_caller = 0x12345678;
+        } else if (guard == 2) {
+            REX_STORE_U32(0x82DE3F90, 1);
+        } else {
+            Select(0); expect_native_timer = false;
+        }
+        Queue({100}); sub_823263D8(ctx, base);
+        Check(REX_LOAD_U32(engine_address + 36) == 600 &&
+              REX_LOAD_U32(engine_address + 32) == 100 && REX_LOAD_U32(engine_address + 64) == 0,
+              "disabled policy, other caller, replay and target0 preserve original residual behavior");
+        Check(rex::cvar::SetFlagByName("native_discard_hitch_time", "true"), "restore hitch policy");
+    }
+    Select(240); expect_native_timer = false; clock_caller = 0x82326430;
+    ResetEngine(base); incoming = TimerContext(); incoming.lr = 0x12345678; ctx = incoming;
+    REX_STORE_U32(engine_address + 44, 100); clock_sample_ms = 750;
+    Queue({100}); sub_823263D8(ctx, base);
+    Check(REX_LOAD_U32(engine_address + 64) == 0 && REX_LOAD_U32(engine_address + 36) == 600,
+          "other timer caller never activates native clock scope");
+    Check(clock_calls == 8, "every clock hook dispatches original exactly once");
     VirtualFree(base, 0, MEM_RELEASE);
     std::printf("Native timing hook tests passed (%u checks)\n", checks);
 }

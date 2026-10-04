@@ -26,7 +26,7 @@ Enhancement work includes launcher filtering controls up to 16x, a separately bu
 
 ## ReXGlue 0.10.0 validation
 
-The current Windows regression suite passes 15 checks, including launcher filtering preferences, XUI package preservation/replacement, the actual TU0 camera snapshot hook, and the disabled-default FPS prototype guards. The camera and frame-rate hooks are included only in an experimental build.
+The current Windows regression suite passes 23 checks, including launcher preferences, XUI package preservation/replacement, actual TU0 timing and vehicle LOD routines, GPU polling, and native event synchronization. The camera, frame-rate and performance hooks are included only in an experimental build.
 
 The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
 
@@ -67,6 +67,8 @@ On Windows, the helper initializes the Visual Studio compiler environment, runs 
 Alternatively, set `REXGLUE_SDK_ROOT` to that installed SDK directory. In this development workspace the helper also recognizes the SDK under `../.tools/rexglue-v0.10.0/win-amd64`.
 
 Use `-TestOnly` for the regression checks without building the game, and `-Regenerate` after changing the XEX or recompilation configuration. Close the game before rebuilding its executable.
+
+For the isolated performance experiments, build with `./build-local.ps1 -PerformanceTest`, then use `Play-Crackdown-Performance-Test.cmd`. It targets 60 FPS with hitch recovery and CPU-wait fixes, reads your saved graphics settings, and copies your existing experimental profile into a separate performance-test profile on first use. Its `crackdown-performance.exe` filename allows building alongside an existing experimental session. Optional earlier vehicle mesh transitions can be tried with `./Play-Crackdown-Performance-Test.cmd -VehicleLod1Distance 15`; `-FrameRate 120`, `144`, or `240` selects a higher pacing target. See the [measurements and limits](experiments/README.md#performance-test-build) before comparing results.
 
 For a manual build, add Clang, Ninja and the SDK's `bin` directory to `PATH`. On Windows, use an x64 Visual Studio development shell:
 ```powershell

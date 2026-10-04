@@ -2,7 +2,9 @@
 
 Uses the generated indirect-dispatch table and actual guest arithmetic. Only
 unselected replay/file clock sources are stubbed; calling one fails the test.
-This validates the original timing machinery, not an unlocked FPS hook.
+Also applies the experimental stall policy through the original guest discard
+ledger. This validates clock arithmetic and policy integration, rather than the
+complete unlocked FPS hook or gameplay behavior.
 """
 import argparse
 import os
@@ -44,6 +46,7 @@ def main():
 #define NOMINMAX
 #include <windows.h>
 #include "crackdown_funcs.h"
+#include "experiments/timestep_policy.h"
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -161,8 +164,60 @@ int main() {
     Float(0x82C63578,0.5f);Getter(1.0/60.0);
     REX_STORE_U8(engine+13,0);Getter(0.033); // Native getter uses committed ms independently of scale.
     REX_STORE_U8(0x82DE3FB0,0);Getter(1.0/120.0); // No published clock: scaled 1/60 fallback.
+
+    // Equivalent to the guarded post-clock-sample hook: sample using the real
+    // guest clock, decide how much elapsed time to discard, use the original
+    // discard ledger, and let the original pipeline publish the retained step.
+    auto DiscardOldHitch=[&](uint32_t now,uint32_t expected_discard) {
+        REX_STORE_U32(kernel+16,now);
+        auto sample=Context();sample.r3.u32=engine;
+        sub_823260C8(sample,base);
+        Check(REX_LOAD_U32(engine+20)==now,"Actual sampled kernel milliseconds");
+        const auto cursor=REX_LOAD_U32(engine+36);
+        const auto previous_sum=REX_LOAD_U32(engine+32);
+        const auto previous_discard=REX_LOAD_U32(engine+64);
+        const auto previous_float_sum=REX_LOAD_U32(engine+60);
+        const auto previous_global_sum=REX_LOAD_U32(0x82D9912C);
+        const auto plan=crackdown::experiments::PlanNativeTimestep(now,cursor);
+        Check(plan.discard_ms==expected_discard,"Policy discards exact old hitch debt");
+        if(plan.discard_ms) {
+            auto discard=Context();discard.r3.u32=engine;discard.r4.u32=plan.discard_ms;
+            sub_82326248(discard,base);
+            REX_STORE_U32(engine+36,plan.committed_before_step_ms);
+        }
+        Check(REX_LOAD_U32(engine+32)==uint32_t(previous_sum+expected_discard),"Discard advances accounted wall time");
+        Check(REX_LOAD_U32(engine+64)==uint32_t(previous_discard+expected_discard),"Discard advances dropped-time ledger");
+        Check(REX_LOAD_U32(engine+60)==previous_float_sum &&
+              REX_LOAD_U32(0x82D9912C)==previous_global_sum,"Discard does not advance cumulative simulation clocks");
+        Check(REX_LOAD_U32(engine+36)==plan.committed_before_step_ms,"Discard advances committed wall-clock cursor");
+    };
+    Reset(1000,1,100);Float(0x82C63578,1.0f);
+    Tick(1016,16,false,false);Tick(1033,17,false,false);
+    DiscardOldHitch(1283,200);
+    Tick(1283,50,false,false);Getter(0.05);
+    Check(REX_LOAD_U32(engine+36)==1283 && REX_LOAD_U32(engine+32)==283 &&
+          REX_LOAD_U32(engine+64)==200,"Stall wall clock finishes with no residual debt");
+    Check(REX_LOAD_U32(0x82D9912C)==83 && REX_LOAD_U32(engine+52)==50,"Stall publishes only retained simulation delta");
+    Near(std::bit_cast<float>(REX_LOAD_U32(engine+56)),0.05,"Stall current float delta");
+    Near(std::bit_cast<float>(REX_LOAD_U32(engine+60)),0.083,"Float cumulative time excludes discarded stall");
+    Tick(1299,16,false,false);Getter(0.016);
+    Check(REX_LOAD_U32(0x82D9912C)==99 && REX_LOAD_U32(engine+36)==1299,"First recovery frame has its normal elapsed delta");
+    Tick(1299,0,true,false);
+    Check(REX_LOAD_U32(engine+32)==299 && REX_LOAD_U32(0x82D9912C)==99,"Same-millisecond recovery adds no time");
+    DiscardOldHitch(1333,0);Tick(1333,34,false,false);
+    Check(REX_LOAD_U32(0x82D9912C)==133,"Normal 30Hz jitter remains unmodified");
+    Reset(1000,1,100);DiscardOldHitch(7000,5950);Tick(7000,50,false,false);
+    Check(REX_LOAD_U32(engine+32)==6000 && REX_LOAD_U32(engine+64)==5950 &&
+          REX_LOAD_U32(engine+36)==7000,"Multi-second stall uses exact discard ledger without remaining long-gap chunks");
+    Check(REX_LOAD_U32(0x82D9912C)==50,"Multi-second stall contributes only one bounded simulation step");
+    Near(std::bit_cast<float>(REX_LOAD_U32(engine+60)),0.05,"Multi-second discard leaves float clock consistent");
+    Reset(0xFFFFFFF0u,1,100);DiscardOldHitch(0x100,222);Tick(0x100,50,false,false);
+    Check(REX_LOAD_U32(engine+36)==0x100 && REX_LOAD_U32(engine+32)==272 &&
+          REX_LOAD_U32(engine+64)==222,"Stall discard remains correct across kernel wrap");
+    Tick(0x111,17,false,false);Getter(0.017);
+    Check(REX_LOAD_U32(0x82D9912C)==67,"Kernel-wrap recovery has no acceleration debt");
     VirtualFree(base,0,MEM_RELEASE);
-    std::puts("PASS: actual TU0 native timer, residual/min/max/skip/zero/wrap/long-gap accounting, fixed/native getter branches");
+    std::puts("PASS: actual TU0 native timer/getter and stall-policy discard/commit ledgers, recovery, zero, long gaps and wrap");
 }
 '''
     boundaries = "\n".join(
@@ -180,6 +235,7 @@ int main() {
             args.cxx, "-std=c++23", "-O2", "-msse4.1", "-DNDEBUG", "-D_DLL", "-D_MT",
             "-Xclang", "--dependent-lib=msvcrt", "-DSPDLOG_FMT_EXTERNAL", "-DSPDLOG_COMPILED_LIB",
             "-I", str(args.generated), "-isystem", str(args.sdk / "include"), str(source),
+            "-I", str(Path(__file__).resolve().parents[1]),
             str(args.sdk / "lib/rexruntime.lib"), str(args.sdk / "lib/spdlog.lib"),
             str(args.sdk / "lib/fmt.lib"), "-o", str(exe), "-fuse-ld=lld-link",
         ], check=True)
