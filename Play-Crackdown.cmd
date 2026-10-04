@@ -2,7 +2,7 @@
 setlocal
 pushd "%~dp0"
 if not exist "out\build\win-amd64-release\crackdown.exe" (
-    echo Crackdown has not been built. Run ..\.tools\build-crackdown.ps1 first.
+    echo Crackdown has not been built. Run build-local.ps1 first.
     pause
     popd
     exit /b 1

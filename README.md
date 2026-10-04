@@ -1,8 +1,28 @@
 # Crackdown Recompilation
-***Crackdown Recompilation is unfinished and it should be expected to encounter issues.***
-This fork uses [ReXGlue SDK 0.2.2](https://github.com/rexglue/rexglue-sdk/releases/tag/v0.2.2) to recompile Crackdown TU0. The installed SDK package is pinned to that exact version. The original project is [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crackdown).
+
+An experimental native Windows recompilation of **Crackdown (2007), TU0**. Campaign gameplay is now playable in hands-on testing, with working movie and gameplay audio, controller input, and 1440p rendering. Development and testing are ongoing; full campaign completion has not been verified.
+
+This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crackdown) and uses [ReXGlue SDK 0.2.2](https://github.com/rexglue/rexglue-sdk/releases/tag/v0.2.2), pinned to that exact version. The latest tested changes are available on this fork's `main` branch.
+
+## Current state — October 4, 2026
+
+| Area | Available now |
+| --- | --- |
+| Campaign | Solo gameplay, movement, shooting, camera controls and driving have been exercised. Hands-on play reports stable frame rate and working sound. |
+| Rendering | Original 1280×720 or 2560×1440 internal rendering, using the original game assets. |
+| Audio | Fixes for silent movies, mixer stalls and audio disappearing after gunfire. Launchers reduce the measured runtime queue delay from about 340 ms to about 40 ms. |
+| Controller | SDL controller support with rumble; tested with an OEM wired Xbox 360 controller over USB. Optional direct XInput polling is available for comparison. |
+| Startup | Microsoft and Realtime Worlds movies skip by default. Campaign cutscenes remain available. |
+| Diagnostics | Optional controller automation, renderer screenshots, Windows audio session inspection, and crash/hang debugging tools. |
+
+The measured performance samples used a Ryzen 7 9800X3D and RTX 5070 Ti on Windows. They establish behavior on that system, not minimum requirements or performance on other hardware. Direct XInput and normal SDL polling felt similar in hands-on comparison; no controller-latency improvement is claimed.
+
+Publication checks regenerated TU0 code in a clean checkout and passed all nine regression checks with SDK 0.2.2. Gameplay testing remains separate from those automated checks.
+
+Known limits include intermittent startup/sign-in crashes, unverified full-campaign and save/reload reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a dedicated graphics options menu are future work.
 
 ## Requirements
+
 - CMake 3.25 or newer and Ninja
 - Clang (the Windows build was verified with Clang 19.1.5)
 - Python 3.8 or newer
@@ -11,9 +31,18 @@ This fork uses [ReXGlue SDK 0.2.2](https://github.com/rexglue/rexglue-sdk/releas
 - A legally acquired copy of Crackdown (2007) for the Xbox 360
 
 ## Steps To Recompile
+
+Clone this fork and enter the repository:
+
+```powershell
+git clone https://github.com/jack-kenney/Crackdown.git
+cd Crackdown
+```
+
 Extract your Crackdown TU0 disc into `assets`, with `default.xex` directly inside that directory. Title updates have not been validated. Assets and generated sources are excluded from Git.
 
 On Windows, the helper initializes the Visual Studio compiler environment, runs code generation if needed, enables and runs the regression tests, and builds Release:
+
 ```powershell
 .\build-local.ps1 -SdkPath C:\path\to\rexglue-sdk\win-amd64
 ```
@@ -34,8 +63,14 @@ Launch from the repository root:
 ```powershell
 out\build\win-amd64-release\crackdown.exe assets
 ```
-`Play-Crackdown.cmd` provides the same asset path, stores user data in `out/userdata`, and writes diagnostics to `out/crackdown.log`.
-The launcher also selects an eight-block audio queue to reduce playback delay; launching the executable directly retains the SDK's 64-block default unless `--audio_maxqframes=8` is supplied.
+For normal play, use one of the included launchers:
+
+| Launcher | Internal rendering | Log |
+| --- | --- | --- |
+| `Play-Crackdown.cmd` | 1280×720 | `out/crackdown.log` |
+| `Play-Crackdown-1440p.cmd` | 2560×1440 | `out/crackdown-1440p.log` |
+
+Both launchers use the extracted `assets` directory, store user data in `out/userdata`, and select an eight-block audio queue to reduce playback delay. Launching the executable directly retains the SDK's 64-block default unless `--audio_maxqframes=8` is supplied. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
 
 ## Rendering resolution
 
@@ -147,5 +182,7 @@ Regression checks exercise repeated and consecutive mixing rounds with uneven wo
 The TU0 positional-audio vector angle helper also clamps normalized dot products to `[-1, 1]`. Gameplay tracing captured both `0x3F800001` and `0xBF800001` (one floating-point step outside the domain) entering the helper. Its reciprocal square-root refinement then generated NaNs; the spatial mixer passed these into persistent reverb history, silencing the Windows stereo output even while render frames continued to submit normally. The clamp retains the original guest approximation. A regression executes the actual generated helper with the captured inputs and checks that 20,001 valid four-lane inputs remain bit-for-bit identical.
 
 ## Legal Stuff
-This project is only inteded for use with legally acquired copies of Crackdown.
+
+This repository contains source code and build tools; supply the game files from your own legally acquired copy of Crackdown. Game assets, generated game code, and development executables are excluded from Git.
+
 This project is not affiliated with Microsoft, Microsoft Game Studios, or the now defunct Realtime Worlds.
