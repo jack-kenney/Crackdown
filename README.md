@@ -62,6 +62,8 @@ A controlled 30-second garage experiment on a Ryzen 7 9800X3D / RTX 5070 Ti meas
 
 Launch with `--automation=true` to give the local test controller player one. Ordinary launches use the SDK's SDL controller input. Automation accepts Xbox buttons, both sticks, and triggers through a process-specific Windows shared-memory mapping; it requires no keyboard focus or virtual-controller driver. Controls release when their one-second lease expires if the sender stops.
 
+Normal controller input acquires SDL's joystick lock before calling the SDK input driver. SDL controller event watches already hold that lock before acquiring the SDK controller-state mutex; matching this order prevents a deadlock during rumble and capability queries. Rumble remains enabled. A regression test exercises 50,000 concurrent events and rumble requests against the real SDL lock; removing the ordering wrapper reproduces the hang.
+
 ```powershell
 $game = Start-Process out\build\win-amd64-release\crackdown.exe -ArgumentList 'assets --automation=true --user_data_root=out/automation-userdata --log_file=out/automation.log --enable_console=false' -PassThru
 python tools/control_game.py --pid $game.Id --press start --seconds 0.25

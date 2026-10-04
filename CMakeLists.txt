@@ -37,6 +37,7 @@ set(CRACKDOWN_SOURCES
     src/main.cpp
     src/cache.cpp
     src/audio_barrier.cpp
+    src/controller_input.cpp
 )
 
 # Include generated code if codegen has been run
@@ -67,6 +68,7 @@ target_link_libraries(crackdown PRIVATE
     rex::kernel
     rex::graphics
     rex::ui
+    rex::input
 )
 
 # Platform entry point, ReXApp source, and platform-specific settings
@@ -87,6 +89,11 @@ if(CRACKDOWN_BUILD_TESTS)
         target_include_directories(crackdown_automation_tests PRIVATE src)
         target_link_libraries(crackdown_automation_tests PRIVATE rex::input rex::ui)
         add_test(NAME automation_controller COMMAND crackdown_automation_tests)
+        add_executable(crackdown_controller_input_tests tests/controller_input_tests.cpp src/controller_input.cpp)
+        target_include_directories(crackdown_controller_input_tests PRIVATE src)
+        target_link_libraries(crackdown_controller_input_tests PRIVATE rex::input rex::ui)
+        add_test(NAME controller_lock_order COMMAND crackdown_controller_input_tests)
+        set_tests_properties(controller_lock_order PROPERTIES TIMEOUT 30)
     endif()
     add_executable(crackdown_cache_tests tests/cache_tests.cpp src/cache.cpp)
     target_include_directories(crackdown_cache_tests PRIVATE src)
@@ -116,6 +123,7 @@ if(CRACKDOWN_BUILD_TESTS)
     )
     if(WIN32)
         add_dependencies(crackdown_check crackdown_automation_tests)
+        add_dependencies(crackdown_check crackdown_controller_input_tests)
     endif()
 endif()
 

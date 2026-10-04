@@ -12,6 +12,7 @@
 #include <rex/graphics/flags.h>
 
 #include "cache.h"
+#include "controller_input.h"
 #ifdef _WIN32
 #include "automation.h"
 #include "timer_resolution.h"
@@ -39,9 +40,10 @@ public:
             PPC_IMAGE_SIZE, PPCFuncMappings}));
     }
   
-#ifdef _WIN32
     void OnPreSetup(rex::RuntimeConfig& config) override
     {
+        config.input_factory = CreateControllerInputSystem;
+#ifdef _WIN32
         if (REXCVAR_GET(high_resolution_timer)) {
             timer_resolution_ = std::make_unique<WindowsTimerResolution>();
             if (timer_resolution_->active()) {
@@ -54,8 +56,8 @@ public:
             automation_ = std::make_unique<AutomationSession>();
             config.input_factory = [this](bool) { return automation_->CreateInputSystem(); };
         }
-    }
 #endif
+    }
 
     void OnPostSetup() override
     {
