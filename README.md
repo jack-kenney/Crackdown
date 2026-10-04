@@ -20,11 +20,13 @@ The measured performance samples used a Ryzen 7 9800X3D and RTX 5070 Ti on Windo
 
 Historical gameplay and performance measurements below used SDK 0.2.2. The 0.10.0 migration regenerates TU0 code and ports the host, input, cache and launcher interfaces. Gameplay testing remains separate from automated checks.
 
-Known limits include intermittent startup/sign-in crashes, unverified full-campaign and save/reload reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a custom in-game graphics menu are future work.
+Known limits include intermittent startup/sign-in crashes, unverified full-campaign completion and long-term save reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a custom in-game graphics menu are future work.
 
 ## ReXGlue 0.10.0 validation
 
-The Windows Release build passed ten regression checks. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run. Long play sessions and city combat on this SDK still need testing.
+The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
+
+Subsequent hands-on testing reported 5–10 minutes of stable city driving, enemy combat, vehicle collisions and jumping at about 29.8 average FPS, with working sound. Saving and reloading also worked in that session. These reports establish a successful gameplay session, not full campaign or long-term save validation; lighting, bloom and FXAA comparisons remain in progress.
 
 The upgrade includes two additional compatibility corrections:
 
@@ -163,7 +165,7 @@ On Windows, `--input_backend=xinput` selects the SDK's native XInput driver. The
 This is an input-latency experiment, with no measured physical-button-to-screen improvement claimed yet. Instrumented TU0 garage gameplay polls input about once per 34 ms frame; its command processor also waits for an emulated vertical blank just before presenting. Direct controller polling does not remove those frame and presentation delays. ReXGlue's `--vsync=false` also accelerates the emulated vertical-blank timer and changes command-processor waits, so it is not used as an input-latency preset.
 
 ```powershell
-$game = Start-Process out\build\win-amd64-release\crackdown.exe -ArgumentList 'assets --automation=true --user_data_root=out/automation-userdata --log_file=out/automation.log --enable_console=false' -PassThru
+$game = Start-Process out\build\win-amd64-release\crackdown.exe -ArgumentList '--game_data_root=assets --automation=true --user_data_root=out/automation-userdata --log_file=out/automation.log --enable_console=false' -PassThru
 python tools/control_game.py --pid $game.Id --press start --seconds 0.25
 python tools/control_game.py --pid $game.Id --ly 24000 --seconds 1
 python tools/control_game.py --pid $game.Id --rx 12000 --seconds 0.5
@@ -189,6 +191,8 @@ out\build\win-amd64-release\crackdown_debugger.exe --dump $game.Id out\hang.dmp
 This records thread stacks, registers and memory mappings without attaching a debugger. It excludes the guest heap to keep the dump small. Choose a new filename for each capture; existing dumps are never overwritten. Preserve the matching executable, PDB, map and log alongside it.
 
 The Windows automation regression test checks controller-state byte order, button events for menus, acknowledgement, rejection of partially published input, and automatic release with a changed packet number when the sender's lease expires. Manual automation has also reached Campaign Solo gameplay and exercised movement, jumping, and camera input.
+
+For recorded driving routes and stationary camera benchmarks, see [the benchmark guide](tools/BENCHMARK.md). The tools record a wired XInput controller, bridge it into an automation instance, replay the controls, and collect guest D3D12 frame submission timings. A separate launcher copies a baseline save into a fresh profile for each graphics comparison. Driving replay can diverge with traffic and collisions; a camera sweep from the same populated viewpoint is a more repeatable graphics comparison. No calibrated Agency-to-city route is included yet.
 
 ## Windows audio diagnostics
 

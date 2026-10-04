@@ -73,6 +73,8 @@ target_precompile_headers(crackdown PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generat
 option(CRACKDOWN_BUILD_TESTS "Build Crackdown regression tests" OFF)
 if(CRACKDOWN_BUILD_TESTS)
     enable_testing()
+    add_test(NAME benchmark_routes
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py")
     add_executable(crackdown_enumeration_tests tests/enumeration_tests.cpp src/enumeration.cpp)
     target_include_directories(crackdown_enumeration_tests PRIVATE generated)
     target_link_libraries(crackdown_enumeration_tests PRIVATE rex::runtime)
