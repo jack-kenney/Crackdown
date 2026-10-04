@@ -37,6 +37,7 @@ set(CRACKDOWN_SOURCES
     src/main.cpp
     src/cache.cpp
     src/audio_barrier.cpp
+    src/audio_spatial.cpp
     src/controller_input.cpp
 )
 
@@ -116,6 +117,12 @@ if(CRACKDOWN_BUILD_TESTS)
                 --include "${CRACKDOWN_SDK_INCLUDE}"
                 --cxx "${CMAKE_CXX_COMPILER}")
     set_tests_properties(audio_math PROPERTIES TIMEOUT 60)
+    add_test(NAME spatial_audio
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/spatial_audio_test.py"
+                --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                --include "${CRACKDOWN_SDK_INCLUDE}"
+                --cxx "${CMAKE_CXX_COMPILER}")
+    set_tests_properties(spatial_audio PROPERTIES TIMEOUT 60)
     add_custom_target(crackdown_check
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure
         DEPENDS crackdown_cache_tests crackdown_audio_barrier_tests crackdown_pack_fix

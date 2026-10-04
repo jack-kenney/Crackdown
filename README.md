@@ -109,6 +109,8 @@ Two TU0 audio fixes are applied by default. The mixing workers use a native barr
 
 Regression checks exercise repeated and consecutive mixing rounds with uneven workers, and execute the generated Bink initializer for all block sizes in mono/stereo DCT and RDFT modes. Runtime testing confirmed campaign cutscene audio reaching the Windows stereo output and gameplay audio continuing after the movie transition. The `.bik` movies and audio banks load from their expected extracted asset paths; no asset renaming is required. Other output devices and extended play sessions still need validation.
 
+The TU0 positional-audio vector angle helper also clamps normalized dot products to `[-1, 1]`. Gameplay tracing captured both `0x3F800001` and `0xBF800001` (one floating-point step outside the domain) entering the helper. Its reciprocal square-root refinement then generated NaNs; the spatial mixer passed these into persistent reverb history, silencing the Windows stereo output even while render frames continued to submit normally. The clamp retains the original guest approximation. A regression executes the actual generated helper with the captured inputs and checks that 20,001 valid four-lane inputs remain bit-for-bit identical.
+
 ## Legal Stuff
 This project is only inteded for use with legally acquired copies of Crackdown.
 This project is not affiliated with Microsoft, Microsoft Game Studios, or the now defunct Realtime Worlds.
