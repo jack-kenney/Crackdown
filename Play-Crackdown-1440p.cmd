@@ -7,7 +7,7 @@ if not exist "out\build\win-amd64-release\crackdown.exe" (
     popd
     exit /b 1
 )
-"out\build\win-amd64-release\crackdown.exe" "%~dp0assets" --user_data_root="%~dp0out\userdata" --log_file="%~dp0out\crackdown-1440p.log" --enable_console=false --draw_resolution_scale_x=2 --draw_resolution_scale_y=2 --audio_maxqframes=8
+"out\build\win-amd64-release\crackdown.exe" --game_data_root="%~dp0assets" --user_data_root="%~dp0out\userdata" --log_file="%~dp0out\crackdown-1440p.log" --enable_console=false --draw_resolution_scale_x=2 --draw_resolution_scale_y=2 --audio_maxqframes=8
 set "gameExit=%errorlevel%"
 if not "%gameExit%"=="0" (
     echo Crackdown exited with code %gameExit%. See out\crackdown-1440p.log.

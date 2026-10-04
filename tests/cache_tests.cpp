@@ -54,21 +54,21 @@ int main()
     CHECK(file->SetLength(4096) == X_STATUS_SUCCESS);
     entry->update();
     CHECK(entry->size() == 4096 && entry->allocation_size() == 4096);
-    CHECK(file->WriteSync(payload.data(), 4, 4096, &bytes) == X_STATUS_SUCCESS);
+    CHECK(file->WriteSync({payload.data(), 4}, 4096, &bytes) == X_STATUS_SUCCESS);
     entry->update();
     CHECK(entry->size() == 4100 && entry->allocation_size() == 4608);
     CHECK(directory->Delete(entry));
     CHECK(directory->GetChild("test.bin") == nullptr);
-    CHECK(file->ReadSync(read.data(), 4, 4096, &bytes) == X_STATUS_SUCCESS && bytes == 4);
+    CHECK(file->ReadSync({read.data(), 4}, 4096, &bytes) == X_STATUS_SUCCESS && bytes == 4);
     file->Destroy();
 
     CHECK(directory->Open(rex::filesystem::FileAccess::kGenericRead, &file) == X_STATUS_SUCCESS);
-    CHECK(file->ReadSync(read.data(), 4, 0, &bytes) == X_STATUS_FILE_IS_A_DIRECTORY && bytes == 0);
+    CHECK(file->ReadSync({read.data(), 4}, 0, &bytes) == X_STATUS_FILE_IS_A_DIRECTORY && bytes == 0);
     CHECK(file->SetLength(4) == X_STATUS_FILE_IS_A_DIRECTORY);
     file->Destroy();
     entry = root->CreateEntry("readonly.bin", rex::filesystem::kFileAttributeNormal);
     CHECK(entry->Open(rex::filesystem::FileAccess::kGenericRead, &file) == X_STATUS_SUCCESS);
-    CHECK(file->WriteSync(payload.data(), 4, 0, &bytes) == X_STATUS_ACCESS_DENIED && bytes == 0);
+    CHECK(file->WriteSync({payload.data(), 4}, 0, &bytes) == X_STATUS_ACCESS_DENIED && bytes == 0);
     CHECK(file->SetLength(4) == X_STATUS_ACCESS_DENIED);
     file->Destroy();
 

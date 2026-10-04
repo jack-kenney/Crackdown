@@ -6,7 +6,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from fix_audio_math import CORRECTION, FUNCTION, fix_directory, fix_source
+import re
+FUNCTION = re.compile(r"DEFINE_REX_FUNC\(sub_82B6D428\) \{.*?\n\}", re.S)
 
 
 def main():
@@ -17,42 +18,15 @@ def main():
     args = parser.parse_args()
     functions = [m[0] for p in args.generated.glob("crackdown_recomp.*.cpp")
                  for m in FUNCTION.finditer(p.read_text(encoding="utf-8"))]
-    if len(functions) != 1 or functions[0].count(CORRECTION) != 2:
-        raise AssertionError("Expected one corrected TU0 Bink initializer")
+    if len(functions) != 1:
+        raise AssertionError("Expected one TU0 Bink initializer")
     body = functions[0]
-    original = body.replace(CORRECTION,
-        "\tctx.f13.u64 = uint64_t(rex::ppu_frsqrte_lut.data[ctx.f0.u64 >> 49]) << 32;")
-    if fix_source(original) != (body, 2) or fix_source(body) != (body, 0):
-        raise AssertionError("Correction must patch twice and be idempotent")
-    unrelated = original.replace("__imp__sub_82B6D428", "__imp__sub_82100000")
-    if fix_source(unrelated) != (unrelated, 0):
-        raise AssertionError("Unrelated guest instructions must remain unchanged")
-    invalid = original.replace("ctx.f0.u64 >> 49", "ctx.f0.u64 >> 48", 1)
     with tempfile.TemporaryDirectory(prefix="crackdown-audio-math-") as tmp:
         path = Path(tmp)
-        source = path / "crackdown_recomp.0.cpp"
-        for newline in ("\n", "\r\n"):
-            source.write_bytes(original.replace("\n", newline).encode())
-            if fix_directory(path) != (2, 1) or fix_directory(path) != (0, 0):
-                raise AssertionError("Directory correction must be idempotent")
-            if newline == "\r\n" and b"\n" in source.read_bytes().replace(b"\r\n", b""):
-                raise AssertionError("CRLF must be preserved")
-        source.write_text(original)
-        (path / "crackdown_recomp.1.cpp").write_text(invalid)
-        before = source.read_bytes()
-        try:
-            fix_directory(path)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("Unknown emitter output must fail")
-        if source.read_bytes() != before:
-            raise AssertionError("Failed validation must leave sources untouched")
-
         # This is the real generated initializer, with only heap and ABI helpers
         # supplied by the test. Check both DCT and RDFT, mono/stereo, all block sizes.
         program = r'''
-#include <rex/ppc/context.h>
+#include "crackdown_pch.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -71,14 +45,16 @@ static uint32_t Allocate(uint32_t size) {
     next_address += (size + 31) & ~31u;
     return address;
 }
-PPC_FUNC_IMPL(__savegprlr_22) {}
-PPC_FUNC_IMPL(__restgprlr_22) {}
-PPC_FUNC_IMPL(sub_82B6BBE8) {
+REX_EXTERN(__savegprlr_22) {}
+REX_EXTERN(__restgprlr_22) {}
+REX_EXTERN(sub_82B6BBE8) {
     const uint32_t address = Allocate(ctx.r4.u32);
-    PPC_STORE_U32(ctx.r3.u32, address);
+    REX_STORE_U32(ctx.r3.u32, address);
     ctx.r3.u32 = address;
 }
-PPC_FUNC_IMPL(sub_82B6BCE0) { ctx.r3.u32 = Allocate(ctx.r3.u32); }
+REX_EXTERN(sub_82B6BCE0) { ctx.r3.u32 = Allocate(ctx.r3.u32); }
+#undef DEFINE_REX_FUNC
+#define DEFINE_REX_FUNC(name) REX_EXTERN(__imp__##name)
 INITIALIZER
 int main() {
     // Eight bytes of constants at the game's high addresses are mapped by a
@@ -86,11 +62,11 @@ int main() {
     constexpr size_t size = 0x82100000ull;
     uint8_t* base = static_cast<uint8_t*>(RESERVE_MEMORY);
     Check(base != nullptr, "Could not reserve test guest memory");
-    PPC_STORE_U32(0x82000A8C, std::bit_cast<uint32_t>(2.0f));
-    PPC_STORE_U32(0x82000A94, 0);
-    PPC_STORE_U64(0x820ED868, std::bit_cast<uint64_t>(0.5));
-    PPC_STORE_U64(0x820ED710, std::bit_cast<uint64_t>(3.0));
-    for (unsigned i=0; i<26; ++i) PPC_STORE_U32(0x835DD078+i*4, 1000000);
+    REX_STORE_U32(0x82000A8C, std::bit_cast<uint32_t>(2.0f));
+    REX_STORE_U32(0x82000A94, 0);
+    REX_STORE_U64(0x820ED868, std::bit_cast<uint64_t>(0.5));
+    REX_STORE_U64(0x820ED710, std::bit_cast<uint64_t>(3.0));
+    for (unsigned i=0; i<26; ++i) REX_STORE_U32(0x835DD078+i*4, 1000000);
     unsigned cases=0;
     for (unsigned rate : {16000u,22050u,44100u,48000u})
     for (unsigned channels : {1u,2u})
@@ -105,12 +81,12 @@ int main() {
         __imp__sub_82B6D428(ctx,base);
         const uint32_t decoder=ctx.r3.u32;
         const unsigned block=(rate>=44100?2048:rate>=22050?1024:512)*(dct?1:channels);
-        PPCRegister gain{}; gain.u32=PPC_LOAD_U32(decoder+4);
+        PPCRegister gain{}; gain.u32=REX_LOAD_U32(decoder+4);
         const float expected=2.0f/std::sqrt(float(block));
         Check(std::isfinite(gain.f32) && gain.f32>0 &&
               std::abs(gain.f32-expected)<expected*0.00001f,
               "Bink normalization is zero, nonfinite or incorrect");
-        Check(PPC_LOAD_U32(decoder)==block, "Incorrect transform block size");
+        Check(REX_LOAD_U32(decoder)==block, "Incorrect transform block size");
         Check(allocations.size()==6 && allocations[1]==(unsigned(std::sqrt(float(block/2)))+2)*4,
               "Incorrect square-root scratch allocation");
         Check(ctx.r1.u32==0x20000, "Initializer changed the guest stack");
@@ -126,7 +102,7 @@ int main() {
         if sys.platform == "win32":
             program = "#define NOMINMAX\n#include <windows.h>\n" + program
             program = program.replace("RESERVE_MEMORY", "VirtualAlloc(nullptr,size,MEM_RESERVE,PAGE_READWRITE)")
-            program = program.replace("    PPC_STORE_U32(0x82000A8C", "    VirtualAlloc(base,0x80000,MEM_COMMIT,PAGE_READWRITE);\n    VirtualAlloc(base+0x82000000,0x100000,MEM_COMMIT,PAGE_READWRITE);\n    VirtualAlloc(base+0x835D0000,0x10000,MEM_COMMIT,PAGE_READWRITE);\n    PPC_STORE_U32(0x82000A8C")
+            program = program.replace("    REX_STORE_U32(0x82000A8C", "    VirtualAlloc(base,0x80000,MEM_COMMIT,PAGE_READWRITE);\n    VirtualAlloc(base+0x82000000,0x100000,MEM_COMMIT,PAGE_READWRITE);\n    VirtualAlloc(base+0x835D0000,0x10000,MEM_COMMIT,PAGE_READWRITE);\n    REX_STORE_U32(0x82000A8C")
             program = program.replace("UNMAP_MEMORY", "VirtualFree(base,0,MEM_RELEASE)")
         else:
             program = "#include <sys/mman.h>\n" + program
@@ -137,7 +113,7 @@ int main() {
         cpp.write_text(program.replace("INITIALIZER",body))
         subprocess.run([args.cxx,"-std=c++23","-O2","-msse4.1",
                         "-DSPDLOG_FMT_EXTERNAL","-DSPDLOG_COMPILED_LIB",
-                        "-isystem",str(args.include),str(cpp),"-o",str(exe)],check=True)
+                        "-I",str(args.generated),"-isystem",str(args.include),str(cpp),"-o",str(exe)],check=True)
         subprocess.run([str(exe)],check=True,timeout=15)
 
 

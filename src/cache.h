@@ -34,8 +34,8 @@ public:
 
 	void Destroy() override;
 
-	rex::X_STATUS ReadSync(void* buffer, size_t buffer_length, size_t byte_offset, size_t* out_bytes_read) override;
-	rex::X_STATUS WriteSync(const void* buffer, size_t buffer_length, size_t byte_offset, size_t* out_bytes_written) override;
+	rex::X_STATUS ReadSync(std::span<uint8_t> buffer, size_t byte_offset, size_t* out_bytes_read) override;
+	rex::X_STATUS WriteSync(std::span<const uint8_t> buffer, size_t byte_offset, size_t* out_bytes_written) override;
 
 	rex::X_STATUS SetLength(size_t length) override;
 

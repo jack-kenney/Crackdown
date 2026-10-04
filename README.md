@@ -2,7 +2,7 @@
 
 An experimental native Windows recompilation of **Crackdown (2007), TU0**. Campaign gameplay is now playable in hands-on testing, with working movie and gameplay audio, controller input, and 1440p rendering. Development and testing are ongoing; full campaign completion has not been verified.
 
-This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crackdown) and uses [ReXGlue SDK 0.2.2](https://github.com/rexglue/rexglue-sdk/releases/tag/v0.2.2), pinned to that exact version. The latest tested changes are available on this fork's `main` branch.
+This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crackdown) and uses [ReXGlue SDK 0.10.0](https://github.com/rexglue/rexglue-sdk/releases/tag/v0.10.0), pinned to that exact version. The upgrade is available on `upgrade/rexglue-0.10.0`; the prior 0.2.2 build remains available on `main` for comparison.
 
 ## Current state — October 4, 2026
 
@@ -18,16 +18,27 @@ This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crack
 
 The measured performance samples used a Ryzen 7 9800X3D and RTX 5070 Ti on Windows. They establish behavior on that system, not minimum requirements or performance on other hardware. Direct XInput and normal SDL polling felt similar in hands-on comparison; no controller-latency improvement is claimed.
 
-Publication checks regenerated TU0 code in a clean checkout and passed all nine regression checks with SDK 0.2.2. Gameplay testing remains separate from those automated checks.
+Historical gameplay and performance measurements below used SDK 0.2.2. The 0.10.0 migration regenerates TU0 code and ports the host, input, cache and launcher interfaces. Gameplay testing remains separate from automated checks.
 
 Known limits include intermittent startup/sign-in crashes, unverified full-campaign and save/reload reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a custom in-game graphics menu are future work.
+
+## ReXGlue 0.10.0 validation
+
+The Windows Release build passed ten regression checks. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run. Long play sessions and city combat on this SDK still need testing.
+
+The upgrade includes two additional compatibility corrections:
+
+- The SDK enumeration wrapper could write an uninitialized item count after an invalid-handle error. TU0 then walked beyond its stack buffer after Start. The local wrapper initializes the count, retains the SDK worker and asynchronous path, and has an error-path regression test.
+- The guest FPS/performance overlay could draw before its shader existed. The request now activates on the render thread when that resource is ready and turns off during teardown. A regression covers startup, readiness and teardown.
+
+The SDK supplies SDL3 input with queued events, native XInput, the corrected Bink reciprocal square root, an eight-block audio default, and a runtime-loaded Xenos graphics plugin. The cache, vector-packing, mixer-barrier and spatial-audio corrections remain. The old SDL2 wrapper and Bink code rewrite have been retired. Two frequently called SDK floating-point stubs retain their no-op behavior without repeated log output.
 
 ## Requirements
 
 - CMake 3.25 or newer and Ninja
 - Clang (the Windows build was verified with Clang 19.1.5)
 - Python 3.8 or newer
-- ReXGlue SDK 0.2.2 ([installation guide](https://github.com/rexglue/rexglue-sdk/wiki/Getting-Started))
+- ReXGlue SDK 0.10.0 ([installation guide](https://github.com/rexglue/rexglue-sdk/wiki/Getting-Started))
 - On Windows, Visual Studio C++ Build Tools with the Clang component and Windows SDK
 - A legally acquired copy of Crackdown (2007) for the Xbox 360
 
@@ -36,7 +47,7 @@ Known limits include intermittent startup/sign-in crashes, unverified full-campa
 Clone this fork and enter the repository:
 
 ```powershell
-git clone https://github.com/jack-kenney/Crackdown.git
+git clone --branch upgrade/rexglue-0.10.0 https://github.com/jack-kenney/Crackdown.git
 cd Crackdown
 ```
 
@@ -47,7 +58,7 @@ On Windows, the helper initializes the Visual Studio compiler environment, runs 
 ```powershell
 .\build-local.ps1 -SdkPath C:\path\to\rexglue-sdk\win-amd64
 ```
-Alternatively, set `REXGLUE_SDK_ROOT` to that installed SDK directory. In this development workspace the helper also recognizes the SDK under `../.tools/rexglue-v0.2.2/win-amd64`.
+Alternatively, set `REXGLUE_SDK_ROOT` to that installed SDK directory. In this development workspace the helper also recognizes the SDK under `../.tools/rexglue-v0.10.0/win-amd64`.
 
 Use `-TestOnly` for the regression checks without building the game, and `-Regenerate` after changing the XEX or recompilation configuration. Close the game before rebuilding its executable.
 
@@ -60,9 +71,11 @@ cmake --build --preset win-amd64-release --target crackdown_check
 ```
 The Linux presets use `clang-20` and `clang++-20`; these changes have been validated on Windows only.
 
+The Windows build stages `rexruntime.dll` and `rexgpu-xenos.dll` beside `crackdown.exe`. Keep those matching SDK DLLs with the executable when copying a build. The host selects the Xenos renderer plugin by default. Rebuild with `-Regenerate` when upgrading an existing checkout. The codegen configuration now uses `[project]` and `[entrypoint]` manifest sections.
+
 Launch from the repository root:
 ```powershell
-out\build\win-amd64-release\crackdown.exe assets
+out\build\win-amd64-release\crackdown.exe --game_data_root=assets
 ```
 For normal play, use one of the included launchers:
 
@@ -72,7 +85,7 @@ For normal play, use one of the included launchers:
 | `Play-Crackdown.cmd` | 1280×720 | `out/crackdown.log` |
 | `Play-Crackdown-1440p.cmd` | 2560×1440 | `out/crackdown-1440p.log` |
 
-The launchers use the extracted `assets` directory, store user data in `out/userdata`, and default to an eight-block audio queue to reduce playback delay. Launching the executable directly retains the SDK's 64-block default unless `--audio_maxqframes=8` is supplied. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
+The launchers use the extracted `assets` directory, store user data in `out/userdata`, and default to an eight-block audio queue to reduce playback delay. SDK 0.10.0 also defaults to eight audio blocks when launching the executable directly. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
 
 ## Windows settings launcher
 
@@ -93,7 +106,7 @@ Double-click `Launch-Crackdown.cmd` after building. It opens a Windows settings 
 
 VSync and the Windows timer precision request retain the tested timing settings. Changing these options requires a new game session. The launcher does not change an already running game.
 
-Equivalent command-line flags include `--show_fps=true`, `--show_perfgraph=true`, `--disable_bloom=true`, `--disable_shadows=true`, `--fix_lighting=true`, `--fix_light_occlusion=false`, `--postprocess_antialiasing=fxaa` (or `fxaa_extreme`), and `--fullscreen=true`. The legacy `--misc_performance_improvements=true` disables both bloom and shadows; its inherited bloom write has been corrected so zero actually skips TU0's bloom pass.
+Equivalent command-line flags include `--show_fps=true`, `--show_perfgraph=true`, `--disable_bloom=true`, `--disable_shadows=true`, `--fix_lighting=true`, `--fix_light_occlusion=false`, `--swap_post_effect=fxaa` (or `fxaa_extreme`), and `--fullscreen=true`. The legacy `--misc_performance_improvements=true` disables both bloom and shadows; its inherited bloom write has been corrected so zero actually skips TU0's bloom pass.
 
 Launcher validation exercises saved settings, invalid-setting rejection, Windows command-line quoting, and the actual Save/Launch buttons. Separate runtime checks captured 1440p gameplay with the FPS display and FXAA, and 4K output with higher quality FXAA. 4K remains experimental; those checks do not establish sustained city/combat performance.
 
@@ -102,7 +115,7 @@ Launcher validation exercises saved settings, invalid-setting rejection, Windows
 The Direct3D 12 renderer can render the game's 1280×720 image at 2560×1440 by scaling both axes by two. Launch the built executable with:
 
 ```powershell
-out\build\win-amd64-release\crackdown.exe assets --draw_resolution_scale_x=2 --draw_resolution_scale_y=2
+out\build\win-amd64-release\crackdown.exe --game_data_root=assets --draw_resolution_scale_x=2 --draw_resolution_scale_y=2
 ```
 
 `Play-Crackdown-1440p.cmd` combines this resolution with the smaller audio queue and writes diagnostics to `out/crackdown-1440p.log`.
@@ -121,7 +134,7 @@ Launch with `--skip_intro_movies=false` to restore the startup movies; restart a
 
 The RAM cache supports creating, extending and appending files, refreshes file-size metadata, safely handles directory metadata and I/O, and synchronizes shared data access. Closing a cache file releases its handle. Its data remains available to other open handles.
 
-ReXGlue 0.2.2 emits aliased `vpkd3d128 FLOAT16_4` conversions that overwrite a source sign bit before reading it. `tools/fix_vector_packing.py` snapshots the source vector while preserving the SDK's conversion and destination lanes. The workaround follows the approach in [BChapmanDev's upstream migration PR](https://github.com/SkiddyToast/Crackdown/pull/1); this fork applies it to SDK 0.2.2.
+ReXGlue 0.10.0 still emits aliased `vpkd3d128 FLOAT16_4` conversions that overwrite a source sign bit before reading it. `tools/fix_vector_packing.py` snapshots the source vector while preserving the SDK's conversion and destination lanes. The workaround follows the approach in [BChapmanDev's upstream migration PR](https://github.com/SkiddyToast/Crackdown/pull/1); this fork retains it for SDK 0.10.0.
 
 CMake runs the idempotent workaround before compiling the game and after the `crackdown_codegen` target. Unknown emitter output stops the rewrite before any files are changed. Generated C++ is never committed.
 
@@ -143,9 +156,9 @@ A controlled 30-second garage experiment on a Ryzen 7 9800X3D / RTX 5070 Ti meas
 
 Launch with `--automation=true` to give the local test controller player one. Ordinary launches use the SDK's SDL controller input. Automation accepts Xbox buttons, both sticks, and triggers through a process-specific Windows shared-memory mapping; it requires no keyboard focus or virtual-controller driver. Controls release when their one-second lease expires if the sender stops.
 
-Normal controller input acquires SDL's joystick lock before calling the SDK input driver. SDL controller event watches already hold that lock before acquiring the SDK controller-state mutex; matching this order prevents a deadlock during rumble and capability queries. Rumble remains enabled. A regression test exercises 50,000 concurrent events and rumble requests against the real SDL lock; removing the ordering wrapper reproduces the hang.
+Normal launches use ReXGlue's SDL3 controller driver. SDK 0.10.0 queues controller events before taking its state lock, replacing this fork's old SDL2 lock-order wrapper. Rumble remains enabled.
 
-On Windows, `--sdl_direct_xinput=true` selects SDL's XInput backend for Xbox controllers by disabling its Raw Input backend before initialization. This reads Xbox pad state during the game's controller query instead of depending on delivery through a Windows message queue. SDL continues to handle mappings, menu keystrokes, hotplug and rumble. The default is `false`; changing it requires restarting. Other SDL controller backends remain available. Regression checks exercise buttons and release packets, signed stick endpoints, independent triggers, menu events, rumble and disconnect using an SDL virtual controller in both modes. A connected Microsoft wired Xbox 360 pad was confirmed to change from SDL's `r` backend tag to `x`.
+On Windows, `--input_backend=xinput` selects the SDK's native XInput driver. The launcher retains the saved `directXinput` setting and `--sdl_direct_xinput=true` compatibility flag, which now select that native backend. This differs from the old SDL2 XInput mode. Regression checks run the production input factories and guest queries concurrently with the SDK UI loop; physical buttons, sticks, hotplug and rumble still require gameplay testing. Host-linked SDL virtual devices cannot reach SDL inside the prebuilt runtime DLL.
 
 This is an input-latency experiment, with no measured physical-button-to-screen improvement claimed yet. Instrumented TU0 garage gameplay polls input about once per 34 ms frame; its command processor also waits for an emulated vertical blank just before presenting. Direct controller polling does not remove those frame and presentation delays. ReXGlue's `--vsync=false` also accelerates the emulated vertical-blank timer and changes command-processor waits, so it is not used as an input-latency preset.
 
@@ -182,7 +195,7 @@ The Windows automation regression test checks controller-state byte order, butto
 ReXGlue 0.2.2 defaults to 64 queued blocks of 256 samples at 48 kHz. A full queue holds approximately 341 ms of already mixed audio, delaying newly mixed gunshots and movie audio. The repository launchers default to `--audio_maxqframes=8`, reducing this capacity to approximately 43 ms without changing the decoder, mixer, sample rate or SDL callback size. This setting must be supplied at startup; restart to change it. For a direct launch:
 
 ```powershell
-out\build\win-amd64-release\crackdown.exe assets --audio_maxqframes=8
+out\build\win-amd64-release\crackdown.exe --game_data_root=assets --audio_maxqframes=8
 ```
 
 Diagnostic callback timestamps on the tested Windows stereo device measured median mixer-submission-to-SDL-callback residence of 339.9 ms with 64 blocks and 39.5 ms with eight. A 60-second 1440p gameplay sample exercised repeated shots, weapon switching, movement and camera rotation: all 11,250 callbacks contained nonzero finite audio, with no empty-queue callbacks, and p95 residence was 49.3 ms. Separate intro and campaign-movie samples also had no empty-queue or nonfinite callbacks. Diagnostic instrumentation was confined to a separate executable; the launchers use the existing SDK implementation.
@@ -200,7 +213,7 @@ Use `--pid <PID>` to select a specific process and `--seconds 10` for a longer s
 
 A nonzero session peak shows audio reaching that Windows output device, but does not confirm that the connected speakers or headphones are audible. Check that the reported device matches the one you are listening to. A zero peak while sounds should be playing warrants inspecting the runtime's `audio_mute` setting and the audio log.
 
-Two TU0 audio fixes are applied by default. The mixing workers use a native barrier with a generation counter: the guest barrier could clear a worker's arrival for the next round and leave audio permanently stalled. `--fix_audio_barrier=false` restores the guest implementation for comparison; restart after changing this setting. The build also corrects two reciprocal square-root instructions in Bink decoder initialization. ReXGlue 0.2.2's lookup table produced an overflowing estimate, resulting in a zero normalization gain and invalid scratch allocation sizes. The correction uses a host reciprocal square root at those two sites and is reapplied after code generation.
+The TU0 mixer and spatial-audio fixes remain enabled by default. The mixing workers use a native barrier with a generation counter: the guest barrier could clear a worker's arrival for the next round and leave audio permanently stalled. `--fix_audio_barrier=false` restores the guest implementation for comparison; restart after changing this setting. SDK 0.10.0's generated reciprocal square root fixes the Bink normalization issue, so the old two-instruction rewrite has been removed. The regression still executes the actual generated initializer to check normalization and scratch allocation sizes.
 
 Regression checks exercise repeated and consecutive mixing rounds with uneven workers, and execute the generated Bink initializer for all block sizes in mono/stereo DCT and RDFT modes. Runtime testing confirmed campaign cutscene audio reaching the Windows stereo output and gameplay audio continuing after the movie transition. The `.bik` movies and audio banks load from their expected extracted asset paths; no asset renaming is required. Other output devices and extended play sessions still need validation.
 

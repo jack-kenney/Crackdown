@@ -5,7 +5,7 @@ param(
     [ValidateRange(1, 64)][int]$Jobs = 8
 )
 $ErrorActionPreference = 'Stop'
-if (-not $SdkPath) { $SdkPath = Join-Path $PSScriptRoot '../.tools/rexglue-v0.2.2/win-amd64' }
+if (-not $SdkPath) { $SdkPath = Join-Path $PSScriptRoot '../.tools/rexglue-v0.10.0/win-amd64' }
 $SdkPath = (Resolve-Path -LiteralPath $SdkPath).Path
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
 $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -25,10 +25,11 @@ $env:PATH = "$clangBin;$ninjaBin;$cmakeBin;$SdkPath/bin;$env:PATH"
 $cmake = Join-Path $cmakeBin 'cmake.exe'
 Push-Location $PSScriptRoot
 try {
-    if ($Regenerate -or -not (Test-Path 'generated/sources.cmake')) {
-        & "$SdkPath/bin/rexglue.exe" codegen crackdown_config.toml
-        if ($LASTEXITCODE -ne 0) { throw 'ReXGlue code generation failed.' }
-    }
+    # Regenerate incrementally so manifest or SDK changes cannot reuse stale code.
+    $codegenArgs = @('codegen', 'crackdown_config.toml')
+    if ($Regenerate) { $codegenArgs += '--ignore-stamp' }
+    & "$SdkPath/bin/rexglue.exe" @codegenArgs
+    if ($LASTEXITCODE -ne 0) { throw 'ReXGlue code generation failed.' }
     & $cmake --preset win-amd64-release "-DCMAKE_PREFIX_PATH=$SdkPath" -DCRACKDOWN_BUILD_TESTS=ON
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
     & $cmake --build --preset win-amd64-release --target crackdown_check --parallel $Jobs

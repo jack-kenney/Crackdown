@@ -7,12 +7,12 @@
 #include <vector>
 
 #include <rex/cvar.h>
-#include <rex/ppc/context.h>
+#include "crackdown_pch.h"
 
 REXCVAR_DECLARE(bool, fix_audio_barrier);
-extern "C" PPC_FUNC(sub_82A50000);
+extern "C" REX_FUNC(sub_82A50000);
 static unsigned fallback_calls = 0;
-PPC_FUNC_IMPL(__imp__sub_82A50000) { ++fallback_calls; }
+REX_EXTERN(__imp__sub_82A50000) { ++fallback_calls; }
 
 static void Check(bool value, const char* message) {
     if (!value) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
@@ -27,11 +27,11 @@ static void Exercise(uint8_t mask, unsigned rounds, bool alternating) {
     for (unsigned cpu = 0; cpu < 6; ++cpu) {
         if (mask & (1u << cpu)) {
             ++count;
-            PPC_STORE_U32(engine + 308 + cpu * 4, 0x100 + cpu);
+            REX_STORE_U32(engine + 308 + cpu * 4, 0x100 + cpu);
         }
-        PPC_STORE_U8(0x2000 + cpu * 0x300 + 268, cpu);
+        REX_STORE_U8(0x2000 + cpu * 0x300 + 268, cpu);
     }
-    PPC_STORE_U32(engine + 304, count);
+    REX_STORE_U32(engine + 304, count);
     std::array<std::atomic<unsigned>, 6> entered{};
     std::atomic<unsigned> finished{0};
     std::vector<std::thread> workers;
@@ -69,7 +69,7 @@ static void Exercise(uint8_t mask, unsigned rounds, bool alternating) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     for (auto& worker : workers) worker.join();
-    Check(PPC_LOAD_U64(engine + 356) == 0 && PPC_LOAD_U64(engine + 364) == 0,
+    Check(REX_LOAD_U64(engine + 356) == 0 && REX_LOAD_U64(engine + 364) == 0,
           "Audio barrier left guest completion flags set");
 }
 

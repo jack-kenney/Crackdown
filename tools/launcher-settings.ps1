@@ -42,12 +42,13 @@ function Save-LauncherSettings([string]$Path, [hashtable]$Settings) {
 
 function Get-GameArguments([string]$Root, [hashtable]$Settings) {
     $flags = [ordered]@{
+        game_data_root = (Join-Path $Root 'assets')
         user_data_root = (Join-Path $Root 'out/userdata')
         log_file = (Join-Path $Root 'out/launcher-game.log')
         enable_console = $false
         draw_resolution_scale_x = $Settings.resolutionScale
         draw_resolution_scale_y = $Settings.resolutionScale
-        postprocess_antialiasing = $Settings.antialiasing
+        swap_post_effect = $Settings.antialiasing
         fullscreen = $Settings.fullscreen
         fix_lighting = $Settings.fixLighting
         fix_light_occlusion = $Settings.fixLightOcclusion
@@ -62,7 +63,6 @@ function Get-GameArguments([string]$Root, [hashtable]$Settings) {
         high_resolution_timer = $true
         vsync = $true
     }
-    Join-Path $Root 'assets'
     foreach ($key in $flags.Keys) {
         $value = $flags[$key]
         if ($value -is [bool]) { $value = $value.ToString().ToLowerInvariant() }

@@ -5,13 +5,13 @@
 #include <unordered_map>
 
 #include <rex/cvar.h>
-#include <rex/ppc/context.h>
+#include "crackdown_pch.h"
 
 REXCVAR_DEFINE_BOOL(fix_audio_barrier, true, "Audio",
     "Synchronize Crackdown TU0 mixing workers by barrier generation (restart required).")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
-extern "C" PPC_FUNC(__imp__sub_82A50000);
+extern "C" REX_FUNC(__imp__sub_82A50000);
 
 namespace {
 struct BarrierState {
@@ -30,20 +30,20 @@ std::unordered_map<uint8_t*, std::unique_ptr<BarrierState>> states;
 // reset. Every worker can reset the completed round; at the boundary between
 // frames that reset can erase an arrival for the next round. Keep arrivals and
 // completion under one lock and release waiters by generation instead.
-PPC_FUNC_IMPL(sub_82A50000) {
+REX_EXTERN(sub_82A50000) {
     if (!REXCVAR_GET(fix_audio_barrier)) {
         __imp__sub_82A50000(ctx, base);
         return;
     }
     const uint32_t engine = ctx.r3.u32;
     const uint32_t barrier = ctx.r4.u32;
-    if (!PPC_LOAD_U32(engine + 304)) return;
+    if (!REX_LOAD_U32(engine + 304)) return;
 
     uint8_t expected = 0;
     for (unsigned cpu = 0; cpu < 6; ++cpu) {
-        if (PPC_LOAD_U32(engine + 308 + cpu * 4)) expected |= uint8_t(1u << cpu);
+        if (REX_LOAD_U32(engine + 308 + cpu * 4)) expected |= uint8_t(1u << cpu);
     }
-    const unsigned cpu = PPC_LOAD_U8(ctx.r13.u32 + 268);
+    const unsigned cpu = REX_LOAD_U8(ctx.r13.u32 + 268);
     // Configured workers must have a valid Xenon CPU and a corresponding handle.
     if (cpu >= 6 || !(expected & (1u << cpu))) {
         __imp__sub_82A50000(ctx, base);
@@ -53,7 +53,7 @@ PPC_FUNC_IMPL(sub_82A50000) {
     BarrierState* state;
     {
         std::lock_guard lock(states_mutex);
-        auto& entry = states[PPC_RAW_ADDR(barrier)];
+        auto& entry = states[REX_RAW_ADDR(barrier)];
         if (!entry) entry = std::make_unique<BarrierState>();
         state = entry.get();
     }
@@ -61,7 +61,7 @@ PPC_FUNC_IMPL(sub_82A50000) {
     const uint64_t generation = state->generation;
     state->arrivals |= uint8_t(1u << cpu);
     if (state->arrivals == expected) {
-        PPC_STORE_U64(barrier, 0);
+        REX_STORE_U64(barrier, 0);
         state->arrivals = 0;
         ++state->generation;
         lock.unlock();

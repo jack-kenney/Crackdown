@@ -82,16 +82,17 @@ struct AutomationSession::Impl {
     public:
         explicit Driver(std::shared_ptr<Impl> impl) : InputDriver(nullptr, 0), impl_(std::move(impl)), idle_(nullptr, 0) {}
         rex::X_STATUS Setup() override { return idle_.Setup(); }
-        rex::X_RESULT GetCapabilities(uint32_t user, uint32_t flags, rex::input::X_INPUT_CAPABILITIES* caps) override {
-            return idle_.GetCapabilities(user, flags, caps);
+        void EnumerateDevices(std::vector<rex::input::DeviceInfo>& out) override { idle_.EnumerateDevices(out); }
+        rex::X_RESULT GetDeviceCapabilities(rex::input::DeviceId user, uint32_t flags, rex::input::X_INPUT_CAPABILITIES* caps) override {
+            return idle_.GetDeviceCapabilities(user, flags, caps);
         }
-        rex::X_RESULT SetState(uint32_t user, rex::input::X_INPUT_VIBRATION* vibration) override {
-            return idle_.SetState(user, vibration);
+        rex::X_RESULT SetDeviceVibration(rex::input::DeviceId user, rex::input::X_INPUT_VIBRATION* vibration) override {
+            return idle_.SetDeviceVibration(user, vibration);
         }
-        rex::X_RESULT GetKeystroke(uint32_t user, uint32_t flags, rex::input::X_INPUT_KEYSTROKE* key) override {
+        rex::X_RESULT GetDeviceKeystroke(rex::input::DeviceId user, uint32_t flags, rex::input::X_INPUT_KEYSTROKE* key) override {
             using rex::X_RESULT;
             using rex::ui::VirtualKey;
-            if (user != 0 && user != 255) return X_ERROR_DEVICE_NOT_CONNECTED;
+            if (user != static_cast<rex::input::DeviceId>(0x4E4F5000)) return X_ERROR_DEVICE_NOT_CONNECTED;
             if (!key) return X_ERROR_BAD_ARGUMENTS;
             std::lock_guard lock(key_mutex_);
             Pad pad{};
@@ -118,9 +119,9 @@ struct AutomationSession::Impl {
             }
             return X_ERROR_EMPTY;
         }
-        rex::X_RESULT GetState(uint32_t user, rex::input::X_INPUT_STATE* state) override {
+        rex::X_RESULT GetDeviceState(rex::input::DeviceId user, rex::input::X_INPUT_STATE* state) override {
             using rex::X_RESULT;
-            if (user != 0) return X_ERROR_DEVICE_NOT_CONNECTED;
+            if (user != static_cast<rex::input::DeviceId>(0x4E4F5000)) return X_ERROR_DEVICE_NOT_CONNECTED;
             // XamInputGetState also uses a null state as a connection query.
             if (!state) return X_ERROR_SUCCESS;
             std::lock_guard lock(key_mutex_);
@@ -158,6 +159,7 @@ AutomationSession::~AutomationSession() { StopCapture(); }
 std::unique_ptr<rex::system::IInputSystem> AutomationSession::CreateInputSystem() {
     auto input = std::make_unique<rex::input::InputSystem>(nullptr);
     input->AddDriver(std::make_unique<Impl::Driver>(impl_));
+    input->SetDeviceAssignment(std::make_unique<rex::input::SlotAssignment>());
     // Automation owns player one. Normal launches retain the SDK's SDL factory.
     return input;
 }

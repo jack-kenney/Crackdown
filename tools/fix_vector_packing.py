@@ -1,4 +1,4 @@
-"""Snapshot aliased FLOAT16_4 inputs in ReXGlue 0.2.2 generated code.
+"""Snapshot aliased FLOAT16_4 inputs in ReXGlue 0.10.0 generated code.
 
 Based on BChapmanDev's workaround in https://github.com/SkiddyToast/Crackdown/pull/1.
 """

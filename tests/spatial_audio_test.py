@@ -13,14 +13,14 @@ def main():
     parser.add_argument("--include", type=Path, required=True)
     parser.add_argument("--cxx", required=True)
     args = parser.parse_args()
-    pattern = re.compile(r"PPC_FUNC_IMPL\(__imp__sub_8225F910\) \{.*?\n\}", re.S)
+    pattern = re.compile(r"DEFINE_REX_FUNC\(sub_8225F910\) \{.*?\n\}", re.S)
     bodies = [m[0] for p in args.generated.glob("crackdown_recomp.*.cpp")
               for m in pattern.finditer(p.read_text(encoding="utf-8"))]
     if len(bodies) != 1:
         raise AssertionError("Expected one TU0 spatial-audio vector acos helper")
     hook = Path(__file__).resolve().parents[1] / "src/audio_spatial.cpp"
     program = r'''
-#include <rex/ppc/context.h>
+#include "crackdown_pch.h"
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -30,6 +30,8 @@ def main():
 static void Check(bool ok, const char* message) {
     if (!ok) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
 }
+#undef DEFINE_REX_FUNC
+#define DEFINE_REX_FUNC(name) REX_EXTERN(__imp__##name)
 GUEST_FUNCTION
 #include "HOOK"
 int main() {
@@ -45,11 +47,11 @@ int main() {
         0xbfaf4418, 0xc08f6ad9, 0x3fb58485, 0x40af6ad8,
         0x3f800001, 0x3f800001, 0x3f800001, 0x3f800001
     };
-    for (unsigned i=0;i<16;++i) PPC_STORE_U32(0x820856E0+i*4,coefficients[i]);
-    PPC_STORE_U32(0x82084F20,0x40490fdb);
-    PPC_STORE_U32(0x82084F24,0x40c90fdb);
-    PPC_STORE_U32(0x82084F28,0x3ea2f983);
-    PPC_STORE_U32(0x82084F2C,0x3e22f983);
+    for (unsigned i=0;i<16;++i) REX_STORE_U32(0x820856E0+i*4,coefficients[i]);
+    REX_STORE_U32(0x82084F20,0x40490fdb);
+    REX_STORE_U32(0x82084F24,0x40c90fdb);
+    REX_STORE_U32(0x82084F28,0x3ea2f983);
+    REX_STORE_U32(0x82084F2C,0x3e22f983);
     // Both one-ULP overshoots were captured immediately before NaN gains.
     for (uint32_t bits : {0x3f800001u,0xbf800001u,0x3f800002u,0xbf800002u}) {
         PPCContext original{}, fixed{};
@@ -105,7 +107,7 @@ int main() {
         cpp.write_text(program.replace("GUEST_FUNCTION", bodies[0]).replace("HOOK", hook.as_posix()))
         subprocess.run([args.cxx, "-std=c++23", "-O2", "-msse4.1",
                         "-DSPDLOG_FMT_EXTERNAL", "-DSPDLOG_COMPILED_LIB",
-                        "-isystem", str(args.include), str(cpp), "-o", str(exe)], check=True)
+                        "-I", str(args.generated), "-isystem", str(args.include), str(cpp), "-o", str(exe)], check=True)
         subprocess.run([str(exe)], check=True, timeout=15)
 
 
