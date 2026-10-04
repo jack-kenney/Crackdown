@@ -90,6 +90,19 @@ This records thread stacks, registers and memory mappings without attaching a de
 
 The Windows automation regression test checks controller-state byte order, button events for menus, acknowledgement, rejection of partially published input, and automatic release with a changed packet number when the sender's lease expires. Manual automation has also reached Campaign Solo gameplay and exercised movement, jumping, and camera input.
 
+## Windows audio diagnostics
+
+If sound is missing, inspect the game's actual Windows audio session while it is running:
+
+```powershell
+python -m pip install pycaw psutil
+python tools/check_audio.py
+```
+
+Use `--pid <PID>` to select a specific process and `--seconds 10` for a longer sample. The tool reports active output devices, the default multimedia device, endpoint/session volume and mute settings, and each game session's peak signal. It only reads settings. Exercise an in-game sound, such as firing a weapon, during sampling; a silent menu or loading screen alone does not establish an audio failure.
+
+A nonzero session peak shows audio reaching that Windows output device, but does not confirm that the connected speakers or headphones are audible. Check that the reported device matches the one you are listening to. A zero peak while sounds should be playing warrants inspecting the runtime's `audio_mute` setting and the audio log. The normal Release executable was verified producing nonzero gameplay audio on a stereo Realtek output using a copy of the existing profile; intermittent silence and other output devices still need validation.
+
 ## Legal Stuff
 This project is only inteded for use with legally acquired copies of Crackdown.
 This project is not affiliated with Microsoft, Microsoft Game Studios, or the now defunct Realtime Worlds.
