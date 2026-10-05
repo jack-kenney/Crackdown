@@ -26,7 +26,7 @@ Enhancement work includes launcher filtering controls up to 16x, a separately bu
 
 ## ReXGlue 0.10.0 validation
 
-Busy-scene performance work now includes an isolated [renderer register-batching test](sdk-patches/rexglue-0.10.0/README.md). A live 1440p city view measured 31.5 FPS with the graphics command thread using one core and GPU usage at 32–38%; looking down from the same position measured 112.2 FPS. The test plugin batches existing register updates without reducing visual settings. `Play-Crackdown-Renderer-Test.cmd` launches it after the separate renderer build; `-Baseline` selects the matching unpatched build. This remains an experiment while gameplay comparisons continue.
+Busy-scene performance work now includes an isolated [renderer register-batching test](sdk-patches/rexglue-0.10.0/README.md). The test plugin batches existing register updates without reducing visual settings. A matching Agency view measured 92.6 guest FPS with batching versus 61.3–63.0 without it. Subsequent hands-on city play reported **68.0 average FPS**, considerable improvement across the board, and rare dips below roughly 55 FPS during an extended session. The city figures are player-reported overlay observations; a controlled city-route comparison remains pending. `Play-Crackdown-Renderer-Test.cmd` launches it after the separate renderer build; `-Baseline` selects the matching unpatched build. The normal launcher remains unchanged.
 
 The current Windows regression suite passes 24 checks, including launcher preferences, XUI package preservation/replacement, actual TU0 timing and vehicle LOD routines, callback registration, GPU polling, and native event synchronization. The camera, frame-rate and performance hooks are included only in an experimental build.
 

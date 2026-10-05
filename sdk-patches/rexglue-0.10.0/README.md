@@ -91,5 +91,10 @@ must not be presented as whole-game speedups.
 
 Game testing and performance observations are recorded in
 [the frame-rate investigation](../../experiments/README.md#renderer-cpu-investigation).
+The matching Agency view measured 92.6 guest FPS with batching versus
+61.3–63.0 without it. Subsequent extended hands-on city play reported 68.0
+average FPS, with rare dips below roughly 55 FPS. Those city figures are
+player-reported overlay observations, not a measured minimum or percentile.
 Vulkan is covered by the method regression but is not built or exercised in a
-game by this Windows helper. Long city sessions remain a separate validation step.
+game by this Windows helper. A controlled city-route comparison and broader
+campaign coverage remain open validation work.

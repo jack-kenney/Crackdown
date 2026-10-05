@@ -488,3 +488,13 @@ stability. The 61–63 FPS baseline is measured with a 240 FPS target, not a
 60 FPS limiter. Local artifacts are under `out/performance/live-25408` and
 `out/performance/live-50692`; corresponding launcher records and captures are
 in `renderer-batched-20261004-193848` and `renderer-baseline-20261004-194630`.
+
+Subsequent hands-on city testing on October 4 reported 68.0 average FPS after
+an extended play session, considerable improvement across the board, and rare
+dips below roughly 55 FPS. The running instance used the batched plugin with
+the same 1440p/extreme FXAA/4x filtering/lighting-fix settings, 240 FPS target
+and 15 m vehicle threshold. This is a player-reported overlay result, not a
+recorded percentile, measured minimum, or controlled route comparison. It adds
+city-play evidence to the Agency measurement; exact duration and a full
+frame-time trace were not collected. Further optimization should compare
+against this batched build, with particular attention to the remaining dips.
