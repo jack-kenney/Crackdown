@@ -443,3 +443,48 @@ The registration regression executes the actual regenerated function through
 the guest lookup table, checking its component byte and original null-path
 behavior, plus register preservation. The exact city action preceding the
 reported log failure has not been replayed.
+
+## Renderer CPU investigation
+
+The October 4 live city/ground comparison identified visibility-dependent CPU
+work in the SDK graphics command thread. At the same player position,
+20-second samples measured 31.55 guest FPS looking over the city and 112.21 FPS
+looking down. Device-wide GPU utilization was 32–38% and 95–99%, respectively.
+The command thread consumed approximately one core in both views. A subsequent
+37.10 FPS street capture used a different position and is excluded from the
+controlled camera comparison.
+
+Instruction samples attributed about 43% of busy-view graphics-thread CPU to
+TYPE0 register submission and metadata lookup. The SDK already batches these
+constant updates for other packet types. The separate
+[renderer patch and build instructions](../sdk-patches/rexglue-0.10.0/README.md)
+route contiguous TYPE0 packets through that existing path while retaining
+scalar side effects. Neither game rendering settings nor the simulation change.
+Both D3D12 and Vulkan method regression suites pass 8,814 cases each.
+
+A native D3D12 check loaded Campaign Solo through the district, supply point
+and loadout screens into The Keep. Captures of both variants show the same
+scene without an observed visual regression. Three 20-second samples used the
+same player coordinates `(1894.5134, 10.9191, -1821.8202)` and camera coordinates
+`(1891.5557, 12.7669, -1825.6058)` with 1440p, extreme FXAA, 4x filtering,
+lighting fix, a 240 FPS target and 15 m vehicle LOD. Only one test game was
+active during each measurement; its output window was 960x540 and internal
+rendering remained 2560x1440. Test audio was muted and input was automated.
+
+| Renderer | Guest FPS | Total CPU cores |
+|---|---:|---:|
+| Batched TYPE0 | 92.59 | 1.67 |
+| Matching original TYPE0 build | 62.95 | 1.48 |
+| Original TYPE0, repeat in same process | 61.35 | 1.36 |
+
+This is an exploratory 47–51% increase at the Agency supply point, with no
+visual setting reduction. The patched sample came first, followed by one
+baseline launch and its repeat; a second patched launch and heavy-city
+comparison remain pending. GPU utilization in the patched sample reached
+89–96%, so further gains there may face a different limit. The game continued
+rendering throughout each sample, and the hitch-discard counter did not grow.
+These results do not establish sustained city performance or long-session
+stability. The 61–63 FPS baseline is measured with a 240 FPS target, not a
+60 FPS limiter. Local artifacts are under `out/performance/live-25408` and
+`out/performance/live-50692`; corresponding launcher records and captures are
+in `renderer-batched-20261004-193848` and `renderer-baseline-20261004-194630`.

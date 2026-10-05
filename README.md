@@ -26,6 +26,8 @@ Enhancement work includes launcher filtering controls up to 16x, a separately bu
 
 ## ReXGlue 0.10.0 validation
 
+Busy-scene performance work now includes an isolated [renderer register-batching test](sdk-patches/rexglue-0.10.0/README.md). A live 1440p city view measured 31.5 FPS with the graphics command thread using one core and GPU usage at 32–38%; looking down from the same position measured 112.2 FPS. The test plugin batches existing register updates without reducing visual settings. `Play-Crackdown-Renderer-Test.cmd` launches it after the separate renderer build; `-Baseline` selects the matching unpatched build. This remains an experiment while gameplay comparisons continue.
+
 The current Windows regression suite passes 24 checks, including launcher preferences, XUI package preservation/replacement, actual TU0 timing and vehicle LOD routines, callback registration, GPU polling, and native event synchronization. The camera, frame-rate and performance hooks are included only in an experimental build.
 
 The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
