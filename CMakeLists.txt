@@ -184,6 +184,11 @@ if(CRACKDOWN_BUILD_TESTS)
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                     --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties(vehicle_lod PROPERTIES TIMEOUT 60)
+        add_test(NAME function_registration
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/function_registration_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(function_registration PROPERTIES TIMEOUT 60)
     endif()
     add_custom_target(crackdown_check
         COMMAND "${CMAKE_CTEST_COMMAND}" --output-on-failure

@@ -26,7 +26,7 @@ Enhancement work includes launcher filtering controls up to 16x, a separately bu
 
 ## ReXGlue 0.10.0 validation
 
-The current Windows regression suite passes 23 checks, including launcher preferences, XUI package preservation/replacement, actual TU0 timing and vehicle LOD routines, GPU polling, and native event synchronization. The camera, frame-rate and performance hooks are included only in an experimental build.
+The current Windows regression suite passes 24 checks, including launcher preferences, XUI package preservation/replacement, actual TU0 timing and vehicle LOD routines, callback registration, GPU polling, and native event synchronization. The camera, frame-rate and performance hooks are included only in an experimental build.
 
 The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
 

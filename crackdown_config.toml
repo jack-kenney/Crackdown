@@ -54,6 +54,8 @@ setjmp_address = 0x82AC2330
 0x821A09F0 = {}
 0x821A0A00 = {}
 0x821A0A10 = {}
+# RetVehicleSeatID: member-function callback bound by 0x822B5C68.
+0x821A0C70 = {}
 0x821E03E0 = {}
 0x821E03F8 = {}
 0x821E8A68 = {}

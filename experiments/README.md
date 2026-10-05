@@ -295,7 +295,7 @@ zero skips, wraparound, large gaps, and register preservation. Separate native
 hook tests cover bounded retries, callsite guards, scale handling, pause, and
 logical deadlines. Presentation tests preserve unrelated callback fields for
 all four targets; pure deadline-policy tests cover stalls and cadence. The current
-suite passes all 23 CTest checks. These tests establish hook mechanics, not full gameplay
+suite passes all 24 CTest checks. These tests establish hook mechanics, not full gameplay
 correctness.
 
 ## Performance test build
@@ -428,3 +428,18 @@ the compiled vehicle hook installs the requested 15 m value at startup; its
 event-comparison samples temporarily restored 25 m. Menu/movie-only samples
 are explicitly excluded. These logs, captures, generated guest
 code and game assets are excluded from Git.
+
+### Vehicle seat callback registration
+
+The prior 240 FPS session's log ended with an unregistered call to `821A0C70`.
+This is a valid `RetVehicleSeatID` callback: binding routine `822B5C68` stores
+its address as a member-function pointer, and wrapper `8250E278` calls it
+indirectly. Code generation had discovered only its internal tail at `821A0C84`.
+The manifest now explicitly seeds the real entry, producing the complete
+function and a matching dispatch-table registration. This correction applies
+when regenerating either the regular or experimental build.
+
+The registration regression executes the actual regenerated function through
+the guest lookup table, checking its component byte and original null-path
+behavior, plus register preservation. The exact city action preceding the
+reported log failure has not been replayed.
