@@ -11,6 +11,22 @@ locked page-validity scan, residency checks and upload behavior. The separate
 removing one exported runtime call per constant without changing their bytes
 or order. Both patches build on the register-batched renderer.
 
+`control-register-batching.patch` extends bulk processing to contained
+`0x2000–0x3FFF` control-register writes. It preserves ordered volatile stores
+and uses the original path when debug logging is enabled. Scratch, coherency,
+gamma, mixed ranges and repeated-register packets keep their existing behavior.
+`command-stream-reuse.patch` retains constructed command storage between
+submissions and records a separate used length. Replay reads only that prefix,
+avoiding zeroing storage that command writers immediately overwrite.
+
+The separate `constant-reuse.patch` compares and copies clean shader constants
+in one SIMD pass. Identical values can retain their existing constant buffer;
+dirty bindings keep the ordinary copy. Comparison uses the same loaded bits
+that are stored, including NaN payloads and signed zero. Fetch notifications
+and residency invalidation remain unconditional. This candidate has a cost
+when constants change and is excluded from `frontend`: the combined comparison
+did not establish additional FPS. It remains available for further scene tests.
+
 ## Why this path
 
 On October 4, 2026, two 20-second live samples at exactly the same player
@@ -57,6 +73,7 @@ git clone --branch v0.10.0 --depth 1 https://github.com/rexglue/rexglue-sdk.git 
 .\tools\build-renderer.ps1 -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
 .\tools\build-renderer.ps1 -Baseline -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
 .\tools\build-renderer.ps1 -Variant optimized -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
+.\tools\build-renderer.ps1 -Variant frontend -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
 ```
 
 In this development workspace, SDK/source paths are detected under `../.tools`.
@@ -74,9 +91,14 @@ diffs are verified against their patch lists, including new source files.
 | `batched` | TYPE0 batching (the default comparison launcher) |
 | `ranges` | Batching plus the single-range allocation fast path |
 | `constants` | Batching plus local shader-constant bit scans |
-| `optimized` | All three CPU changes |
+| `optimized` | TYPE0 batching, single-range allocation and constant packing |
+| `controls` | `optimized` plus control-register batching |
+| `stream` | `optimized` plus command-storage reuse |
+| `frontend` | `optimized` plus both control batching and command-storage reuse |
+| `reuse` | `optimized` plus experimental shader-constant reuse |
+| `frontend-reuse` | `frontend` plus experimental shader-constant reuse |
 | `gpu` | Batching plus optional GPU timestamp instrumentation |
-| `optimized-gpu` | All CPU changes plus optional GPU timestamps |
+| `optimized-gpu` | The original three CPU changes plus optional GPU timestamps |
 
 ```powershell
 .\Play-Crackdown-Renderer-Test.cmd
@@ -87,7 +109,9 @@ diffs are verified against their patch lists, including new source files.
 ```
 
 The dedicated launcher defaults to the profiled 240 FPS target and 15 m vehicle
-threshold. Both variants use the same saved graphics choices and
+threshold. `Play-Crackdown-Renderer-Optimized.cmd` selects `frontend`; use
+`Play-Crackdown-Renderer-Test.cmd -Variant optimized` for the previous build.
+All variants use the same saved graphics choices and
 `out/userdata-renderer-test` profile. It copies progress from the performance
 profile on first launch and rebuilds its own shader cache. Run the variants
 sequentially; the launcher rejects concurrent use of that comparison profile.
@@ -128,6 +152,23 @@ the original single-range path and zero in the patched path. The constant
 fixture passes 23,192 original/patched/oracle comparisons across both shader
 banks, sparse/dense maps, unaligned destinations and arbitrary float payloads.
 These fixture timings are not whole-game speedups.
+
+Control-register regression executes real original/patched methods and the
+actual GPU logger: 33,516 comparisons pass for each of clang++ and clang-cl,
+covering register bytes, special side effects, logging levels and wrapped
+payloads. The deferred-command fixture passes 732,832 checks, including every
+opcode, variable payloads, nullable arguments, alignment, growth and shorter
+submissions after reset. Retained storage is poisoned before recording to
+expose any dependence on its former zero initialization. These tests create
+no GPU device; live rendering is checked separately.
+
+The constant-reuse fixture passes 10,201 single-variant cases and 10,221 when
+combined with control batching. It checks exact uploaded bytes, stage and shader
+layout changes, partial/unaligned writes, signed zero and NaN payloads, and a
+source-mutation case proving the compared value is the one stored. TYPE0 tests
+for this variant prove any retained clean binding has identical referenced bytes;
+other variants keep exact original dirty-state comparisons. Fetch invalidation
+remains exact in every variant.
 
 ## GPU measurements
 

@@ -1,0 +1,25 @@
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -1809,6 +1809,21 @@
+   }
+   uint32_t end_index = start_index + num_registers - 1;
+ 
++  // This control-register block has neither CommandProcessor side effects nor
++  // backend constant/fetch invalidation. Retain scalar stores for WAIT_REG_MEM
++  // visibility, and the ordinary path when unknown-register diagnostics apply.
++  if (start_index >= 0x2000 && start_index < 0x4000 &&
++      num_registers <= 0x4000 - start_index) {
++    auto* gpu_logger = rex::GetLoggerRaw(rex::log::gpu());
++    if (!gpu_logger || !gpu_logger->should_log(spdlog::level::debug)) {
++      volatile uint32_t* values = register_file_->values + start_index;
++      for (uint32_t i = 0; i < num_registers; ++i) {
++        values[i] = memory::load_and_swap<uint32_t>(base + i);
++      }
++      return;
++    }
++  }
++
+   auto range_has_any_constant_usage = [](const uint64_t* usage_map, uint32_t first_constant,
+                                          uint32_t last_constant) -> bool {
+     if (first_constant > last_constant) {

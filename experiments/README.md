@@ -617,3 +617,88 @@ Local sample directories are `out/performance/live-51052/whole1440-01`,
 `live-45560/whole1440-return`; corresponding `renderer-optimized-gpu-*` directories
 contain the full GPU CSV, launch arguments, logs and captured output. These
 fixed-view results do not establish performance in a busy city route.
+
+### Further CPU command processing (October 5)
+
+Two more patches extend the optimized renderer. Contained control-register
+packets now avoid per-word virtual dispatch and metadata lookup, while retaining
+ordered volatile stores and the original diagnostic path at debug verbosity.
+Deferred command recording retains its constructed storage across submissions
+and resets a used-length counter. Every replayed field is explicitly initialized;
+the unused tail is never replayed. Graphics settings, draw calls, readbacks and
+simulation timing are unchanged.
+
+The same fixed Agency position/camera was measured with 20-second observations,
+copies of the same save, a 240 FPS target, 15 m vehicle threshold, 1440p internal
+rendering, extreme FXAA, lighting fix, bloom, shadows and 4x filtering. The output
+window remained 960x540. Builds and debugger sampling were outside measurement
+windows. Each frame increment was observed individually, player/camera positions
+matched, and the hitch-discard counter did not grow in any sample.
+
+| Order | Variant | Guest submission FPS |
+|---|---|---:|
+| A, two samples | Earlier `optimized` | 91.65 / 91.65 |
+| B, two samples | `stream`: command-storage reuse only | 97.90 / 95.50 |
+| C, two samples | `frontend`: control batching and storage reuse | 111.10 / 108.75 |
+| A, fresh-launch return | Earlier `optimized` | 97.65 |
+| D, two samples | `reuse`: shader-constant reuse only | 103.10 / 98.30 |
+| E, two consecutive samples | `frontend-reuse`: all candidates | 112.15 / 111.95 |
+| C, fresh-launch return, two consecutive samples | `frontend` | 111.90 / 112.15 |
+
+The fresh reference return exposes meaningful run variation. Relative to that
+stronger reference, the combined change gains about **11–15%** in this view.
+Command-storage reuse alone overlaps the reference range, so these observations
+do not establish its separate FPS contribution. Control batching accounts for
+the clear additional gain in the combined comparison. These are stationary
+submission rates, not monitor presentation rates or busy-city minimums.
+Captured output was visually consistent; broader city/campaign play remains
+necessary. Existing resolve-sample warnings occur in both old and new logs.
+
+Shader-constant reuse compares and copies each value once, retaining a clean
+constant buffer when its bits are unchanged. It initially measured 103.10 FPS
+in isolation, but its repeat was 98.30 FPS. More decisively, the full combination
+and a fresh `frontend` return both measured approximately 112 FPS using identical
+automatic startup and sampling sequences. This does not establish an additional
+FPS gain, so constant reuse remains an explicit experimental variant. Changing
+values add comparison work; passing correctness tests does not establish a win.
+The default `frontend` renderer also passed a short camera/movement/jump/two-shot
+smoke test after timing, with continued rendering and the expected ammunition
+change. That smoke test is not a city benchmark or campaign stability test.
+
+`Play-Crackdown-Renderer-Optimized.cmd` now selects `frontend`. The earlier
+three-patch renderer remains available with
+`Play-Crackdown-Renderer-Test.cmd -Variant optimized`. Control-only and
+storage-only variants are also supported by the builder. The combined build
+passes 33,516 control-register comparisons, 732,832 deferred record/replay checks,
+and the prior 49,346 register/range/constant comparisons. Regression fixtures
+check real SDK methods, including poisoned retained storage and exact logger
+payloads. Build-generated offsets and DLL hashes identify each sampled binary.
+
+A fresh 400-sample graphics-thread profile of the earlier optimized build found
+28 observations in base register writes, 16 in metadata lookup and 12 in D3D12
+scalar writes. It also resolved the previously unattributed CRT cost: 58 samples
+(14.5%) were copies in `IssueCopy_ReadbackResolvePath`, 10 were shared-memory
+uploads and four were constant packing. Only two samples were command-storage
+`memset`. These are sampled shares from this scene, not additive gain forecasts.
+
+Readback copies remain necessary under the current visibility contract. Their
+destination is the direct physical mapping, which bypasses guest page-watch
+faults, so this cost is not repeated write-fault handling. Local CRT disassembly
+showed 49 of the 58 copy samples in an AVX-512 non-temporal loop with `sfence`;
+nine were in medium-sized `rep movsb` copies. An isolated aligned/unaligned
+comparison passed 704 byte/guard checks, but an AVX2 streaming replacement was
+substantially slower for hot medium buffers and offered no meaningful cold-copy
+gain. This was an ordinary-RAM benchmark, not a GPU-mapped benchmark. No custom
+copy routine or readback omission was added.
+
+Raw observations and launch/capture records are under
+`out/performance/renderer-optimized-frames-reference-20261005-044436`,
+`renderer-stream-frames-20261005-045648`,
+`renderer-frontend-frames-20261005-050111` and
+`renderer-optimized-frames-return-20261005-050425`. The first directory also
+contains the separate instruction-stack sample. Synthetic copy artifacts are
+under `out/readback-copy-benchmark`. Constant-reuse and return captures are in
+`renderer-reuse-frames-20261005-050905`,
+`renderer-frontend-reuse-frames-20261005-051454` and
+`renderer-frontend-frames-return-20261005-051657` under the same performance
+directory. The last directory contains the separate post-input smoke capture.

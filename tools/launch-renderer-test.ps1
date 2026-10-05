@@ -2,7 +2,7 @@ param(
     [ValidateSet(60, 120, 144, 240)][int]$FrameRate = 240,
     [ValidateRange(0, 100)][double]$VehicleLod1Distance = 15,
     [switch]$Baseline,
-    [ValidateSet('baseline', 'batched', 'ranges', 'constants', 'optimized', 'gpu', 'optimized-gpu')]
+    [ValidateSet('baseline', 'batched', 'ranges', 'constants', 'optimized', 'gpu', 'optimized-gpu', 'controls', 'stream', 'reuse', 'frontend', 'frontend-reuse')]
     [string]$Variant = 'batched',
     [string]$GpuTimingPath,
     [ValidateRange(1, 10000)][int]$GpuTimingInterval = 60,

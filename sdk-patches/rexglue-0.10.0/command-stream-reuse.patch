@@ -1,0 +1,50 @@
+diff --git a/include/rex/graphics/d3d12/deferred_command_list.h b/include/rex/graphics/d3d12/deferred_command_list.h
+index 7f1eb7f..d67a33c 100644
+--- a/include/rex/graphics/d3d12/deferred_command_list.h
++++ b/include/rex/graphics/d3d12/deferred_command_list.h
+@@ -644,6 +644,8 @@ class DeferredCommandList {
+ 
+   // uintmax_t to ensure uint64_t and pointer alignment of all structures.
+   std::vector<uintmax_t> command_stream_;
++  // Keep constructed storage across submissions; only this prefix is replayed.
++  size_t command_stream_used_ = 0;
+ };
+ 
+ }  // namespace rex::graphics::d3d12
+diff --git a/src/graphics/d3d12/deferred_command_list.cpp b/src/graphics/d3d12/deferred_command_list.cpp
+index e6d6277..813de59 100644
+--- a/src/graphics/d3d12/deferred_command_list.cpp
++++ b/src/graphics/d3d12/deferred_command_list.cpp
+@@ -25,7 +25,7 @@ DeferredCommandList::DeferredCommandList(const D3D12CommandProcessor& command_pr
+ }
+ 
+ void DeferredCommandList::Reset() {
+-  command_stream_.clear();
++  command_stream_used_ = 0;
+ }
+ 
+ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
+@@ -34,7 +34,7 @@ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
+   SCOPE_profile_cpu_f("gpu");
+ #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   const uintmax_t* stream = command_stream_.data();
+-  size_t stream_remaining = command_stream_.size();
++  size_t stream_remaining = command_stream_used_;
+   ID3D12PipelineState* current_pipeline_state = nullptr;
+   while (stream_remaining != 0) {
+     const CommandHeader& header = *reinterpret_cast<const CommandHeader*>(stream);
+@@ -280,8 +280,12 @@ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
+ void* DeferredCommandList::WriteCommand(Command command, size_t arguments_size_bytes) {
+   size_t arguments_size_elements =
+       (arguments_size_bytes + sizeof(uintmax_t) - 1) / sizeof(uintmax_t);
+-  size_t offset = command_stream_.size();
+-  command_stream_.resize(offset + kCommandHeaderSizeElements + arguments_size_elements);
++  const size_t offset = command_stream_used_;
++  const size_t required = offset + kCommandHeaderSizeElements + arguments_size_elements;
++  if (required > command_stream_.size()) {
++    command_stream_.resize(required);
++  }
++  command_stream_used_ = required;
+   CommandHeader& header = *reinterpret_cast<CommandHeader*>(command_stream_.data() + offset);
+   header.command = command;
+   header.arguments_size_elements = uint32_t(arguments_size_elements);

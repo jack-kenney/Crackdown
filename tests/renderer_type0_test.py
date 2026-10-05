@@ -74,11 +74,18 @@ prefix = r'''
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <immintrin.h>
 #include <random>
 #include <unordered_map>
 #include <vector>
 #include <rex/graphics/register_file.h>
 #include <rex/memory/ring_buffer.h>
+#include <rex/logging.h>
+// Real logger access is used by the contained-control-block optimization; this
+// fixture still omits diagnostics, which the dedicated control test compares.
+#undef REXGPU_ERROR
+#undef REXGPU_WARN
+#undef REXGPU_DEBUG
 #define REXGPU_ERROR(...) ((void)0)
 #define REXGPU_WARN(...) ((void)0)
 #define REXGPU_DEBUG(...) ((void)0)
@@ -157,7 +164,8 @@ using Backend = VulkanCommandProcessor;
 using Backend = D3D12CommandProcessor;
 #endif
 static unsigned cases = 0;
-static void Compare(const D3D12CommandProcessor& a, const D3D12CommandProcessor& b) {
+static void Compare(const D3D12CommandProcessor& a, const D3D12CommandProcessor& b,
+                    const RegisterFile* before = nullptr) {
   assert(!memcmp(a.regs.values, b.regs.values, sizeof(a.regs.values)));
   assert(a.extended_register_values_ == b.extended_register_values_);
   assert(a.mem.storage == b.mem.storage);
@@ -166,19 +174,43 @@ static void Compare(const D3D12CommandProcessor& a, const D3D12CommandProcessor&
   assert(a.gamma_ramp_rw_component_ == b.gamma_ramp_rw_component_);
   assert(a.gamma256_notifications == b.gamma256_notifications);
   assert(a.gamma_pwl_notifications == b.gamma_pwl_notifications);
+#if defined(TEST_CONSTANT_REUSE) && !defined(TEST_VULKAN)
+  // Only the detected constant-reuse variant may retain a clean binding.
+  // Prove every referenced byte still equals the buffer's pre-packet data.
+  for (unsigned bank = 0; bank < 3; ++bank) {
+    bool clean_a = bank == 0 ? a.cbuffer_binding_float_vertex_.up_to_date :
+        bank == 1 ? a.cbuffer_binding_float_pixel_.up_to_date : a.cbuffer_binding_bool_loop_.up_to_date;
+    bool clean_b = bank == 0 ? b.cbuffer_binding_float_vertex_.up_to_date :
+        bank == 1 ? b.cbuffer_binding_float_pixel_.up_to_date : b.cbuffer_binding_bool_loop_.up_to_date;
+    if (clean_a != clean_b) {
+      assert(clean_a && !clean_b && before);
+      if (bank < 2) {
+        const uint64_t* usage = bank ? a.current_float_constant_map_pixel_ : a.current_float_constant_map_vertex_;
+        uint32_t base = XE_GPU_REG_SHADER_CONSTANT_000_X + bank * 1024;
+        for (unsigned i = 0; i < 256; ++i) if ((usage[i / 64] >> (i % 64)) & 1)
+          assert(!memcmp(a.regs.values + base + i * 4, before->values + base + i * 4, 16));
+      } else {
+        assert(!memcmp(a.regs.values + XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031,
+                       before->values + XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031, 40 * 4));
+      }
+    }
+  }
+#else
   assert(a.cbuffer_binding_float_pixel_.up_to_date == b.cbuffer_binding_float_pixel_.up_to_date);
   assert(a.cbuffer_binding_float_vertex_.up_to_date == b.cbuffer_binding_float_vertex_.up_to_date);
   assert(a.cbuffer_binding_bool_loop_.up_to_date == b.cbuffer_binding_bool_loop_.up_to_date);
+#endif
   assert(a.cbuffer_binding_fetch_.up_to_date == b.cbuffer_binding_fetch_.up_to_date);
   assert(a.vertex_buffers_in_sync_[0] == b.vertex_buffers_in_sync_[0]);
   assert(a.vertex_buffers_in_sync_[1] == b.vertex_buffers_in_sync_[1]);
   assert(a.texture.dirty == b.texture.dirty);
 }
-static void Compare(const VulkanCommandProcessor& a, const VulkanCommandProcessor& b) {
-  Compare(static_cast<const D3D12CommandProcessor&>(a), static_cast<const D3D12CommandProcessor&>(b));
+static void Compare(const VulkanCommandProcessor& a, const VulkanCommandProcessor& b,
+                    const RegisterFile* before = nullptr) {
+  Compare(static_cast<const D3D12CommandProcessor&>(a), static_cast<const D3D12CommandProcessor&>(b), before);
   assert(a.current_constant_buffers_up_to_date_ == b.current_constant_buffers_up_to_date_);
 }
-static void Check(uint32_t base, uint32_t count, bool repeated, unsigned wrap, bool open = true, bool truncate = false, uint32_t usage_mode = 0) {
+static void Check(uint32_t base, uint32_t count, bool repeated, unsigned wrap, bool open = true, bool truncate = false, uint32_t usage_mode = 0, bool identical = false) {
   assert(count >= 1 && count <= 16384);
   Backend a, b;
   std::mt19937 random(base + count * 71 + wrap * 1701 + usage_mode * 13);
@@ -198,7 +230,8 @@ static void Check(uint32_t base, uint32_t count, bool repeated, unsigned wrap, b
   unsigned capacity = count + 8;
   std::vector<uint32_t> data(capacity);
   unsigned read = wrap == 0 ? 0 : wrap == 1 ? capacity - 1 : capacity - count / 2 - 1;
-  for (unsigned i = 0; i < count; ++i) data[(read + i) % capacity] = rex::byte_swap(random());
+  for (unsigned i = 0; i < count; ++i) data[(read + i) % capacity] = rex::byte_swap(identical ? a.regs.values[base + i] : random());
+  RegisterFile before = a.regs;
   auto data_original = data;
   auto data_before = data;
   rex::memory::RingBuffer actual(reinterpret_cast<uint8_t*>(data.data()), data.size() * 4);
@@ -215,7 +248,7 @@ static void Check(uint32_t base, uint32_t count, bool repeated, unsigned wrap, b
   assert(actual.read_offset() == original.read_offset());
   assert(actual.read_count() == original.read_count());
   assert(data == data_before);
-  Compare(a, b);
+  Compare(a, b, &before);
   ++cases;
 }
 static void Benchmark() {
@@ -268,6 +301,12 @@ int main() {
       Check(base, 12, true, wrap);
     }
   }
+#ifdef TEST_CONSTANT_REUSE
+  for (uint32_t base : {0x4000u, 0x4001u, 0x43ffu, 0x4400u, 0x4900u, 0x4907u})
+    for (uint32_t count : {1u, 4u, 8u, 32u}) for (unsigned wrap = 0; wrap < 3; ++wrap)
+      for (uint32_t usage = 0; usage < 3; ++usage)
+        Check(base, count, false, wrap, true, false, usage, true);
+#endif
   Benchmark();
 #ifdef TEST_VULKAN
   puts("PASS Vulkan: exact patched TYPE0, original scalar TYPE0, real RingBuffer and bulk/scalar methods agree.");
@@ -288,12 +327,12 @@ cl_style = Path(compiler).name.lower() in {'cl', 'cl.exe', 'clang-cl', 'clang-cl
 if cl_style:
     command = [compiler, '/nologo', '/MD', '/EHsc', '/O2', '/std:c++latest',
                '/DSPDLOG_COMPILED_LIB', '/DSPDLOG_FMT_EXTERNAL']
-    if 'clang' in Path(compiler).name.lower(): command += ['/clang:-msse4.1']
+    if 'clang' in Path(compiler).name.lower(): command += ['/clang:-march=x86-64-v2']
     command += ['/I' + str(p) for p in includes]
     command += [str(p) for p in sources]
     command += ['/Fo' + str(output) + os.sep, '/Fe' + str(executable), '/link', str(installed / 'lib/rexruntime.lib')]
 else:
-    command = [compiler, '-std=c++23', '-O2', '-msse4.1', '-fms-runtime-lib=dll',
+    command = [compiler, '-std=c++23', '-O2', '-march=x86-64-v2', '-fms-runtime-lib=dll',
                '-Xlinker', '/NODEFAULTLIB:libcmt',
                '-DSPDLOG_COMPILED_LIB', '-DSPDLOG_FMT_EXTERNAL']
     command += ['-I' + str(p) for p in includes]
@@ -301,6 +340,8 @@ else:
     command += [str(installed / 'lib/rexruntime.lib'), '-o', str(executable)]
 environment = os.environ.copy()
 environment['PATH'] = str(installed / 'bin') + os.pathsep + environment.get('PATH', '')
+if 'copy_range_and_check_changes' in d3d_methods:
+    command.insert(1, '/DTEST_CONSTANT_REUSE' if cl_style else '-DTEST_CONSTANT_REUSE')
 for backend in ('D3D12', 'Vulkan'):
     compile_command = command.copy()
     if backend == 'Vulkan':
