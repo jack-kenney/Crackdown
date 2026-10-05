@@ -3,7 +3,8 @@
 Status: investigating, 2026-10-05. A step-down correction passed human testing
 and is enabled by default in native timing builds. Original timing is unchanged.
 The distant pedestrian movement/animation correction also passed human testing.
-Distant vehicle speed and the occasional stair recurrence remain unresolved.
+The separate background-car timing correction also passes generated-routine
+tests and human gameplay comparison. The occasional stair recurrence remains unresolved.
 
 Hands-on testing reports occasional accelerated airborne movement, sometimes
 after standing still, with no obvious vehicle impact or damage. Earlier reports
@@ -292,11 +293,58 @@ Read-only live samples agree: movement and animation track published elapsed
 time at approximately 1.00x, versus approximately 2.22x before correction.
 Background cars still appear too fast until they begin rendering. The sampled
 pedestrian pool contains model IDs 0 through 5; its selected and unselected
-objects both show normalized motion. This does not establish that civilian
-vehicle driving shares that path. The separate `cTrafficDrivingAgent` constructor
+objects both show normalized motion. Civilian low-detail cars use a separate
+pool, as confirmed below. The separate `cTrafficDrivingAgent` constructor
 (`821ABF30`, vtable `8207EB48`) and its state dispatcher (`821AC810`, reached through `821AFF40` /
 `821AFE40`) are follow-up
-leads. Fixed 1/30 values also occur in `821A48A8` and `821AB8A0`; their neighboring
+leads for nearby physical traffic. Fixed 1/30 values also occur in `821A48A8` and `821AB8A0`; their neighboring
 comparisons suggest driving-distance thresholds, so they need semantic review
 before changing them. The independent Agency voice-line timer investigation remains
 unresolved; this change does not establish a connection to those cutoffs.
+
+## Background car correction test
+
+The low-detail vehicle subsystem loads dedicated LOD4/LOD5 saloon and box-van
+assets in `82331E60`. Its 1,000-slot pool starts at `82FDF470`, uses 480-byte
+objects and has a separate signature at `82FDE4B4`. Worker `82332EC8` advances
+each allocated car via `82333538` before its visibility classification.
+The movement routine applies a fixed displacement and consumes one path step
+per call, with a fixed 10% direction response. At higher update rates that
+speeds both cruising and turning independently of nearby vehicle physics.
+
+A 15-second capture of the uncorrected pool yielded 57,060 filtered stable
+position pairs: projected displacement was approximately 2.38x the authored
+elapsed-time rate, including cars with zero visibility bits. See the
+[timing audit](fixed-timing-audit.md) for filtering and sampling limits.
+A matching 20-second corrected capture yielded 76,757 filtered pairs with a
+median movement ratio of 0.999988, approximately 1.00x. Zero and nonzero visibility
+classifications both show normalized movement. Human gameplay comparison of
+the car-test build subsequently reported good behavior.
+
+The correction scales consumed XYZ displacement by retained native time,
+maintains fractional path countdown and uses an elapsed-time direction response.
+It preserves authored speed/random multipliers, nominal displacement in memory,
+W and original asynchronous route initialization. Host fractional state resets
+when a slot is allocated again or its route/countdown changes. The native-only
+flag `normalize_background_car_timing` defaults to true; explicit false provides
+a comparison control.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-physics-trace.ps1 -CarVariant -Jobs 2
+.\Play-Crackdown-Background-Cars.cmd
+```
+
+This stages `out/variants/physics-cars/crackdown-physics-trace.exe` with the
+optimized renderer, corrected pedestrians and step-down correction. It uses
+the same diagnostic save profile and physical controller as the crowd test;
+save and close another diagnostic instance first. Other diagnostic launchers
+explicitly disable car normalization so persisted settings do not alter their
+comparison. Staging does not overwrite a running standard executable.
+
+All 31 regression tests pass. The new integration fixture executes the actual generated car movement body
+at 30/60/120/144/240 Hz, verifies variable deltas, segment ends, original route
+initialization, authored data, direction response, recycled slots and unchanged
+W, and compares opt-out/unsupported cases against full original contexts and
+guest memory. The tester reported that the car-test build behaves well; broader
+coverage of turns and traffic transitions remains useful. This does not address vehicle impulse behavior,
+the possible staircase recurrence or Agency voice-line interruption.

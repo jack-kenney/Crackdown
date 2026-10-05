@@ -79,6 +79,7 @@ void ResetEngine(uint8_t* base) {
 REX_EXTERN(__imp__sub_823315E0) { Check(false, "clock hook cannot allocate crowd objects"); }
 REX_EXTERN(__imp__sub_82330038) { Check(false, "clock hook cannot update crowd objects"); }
 REX_EXTERN(__imp__sub_82338220) { Check(false, "clock hook cannot update crowd steering"); }
+REX_EXTERN(__imp__sub_82333538) { Check(false, "clock hook cannot update background cars"); }
 REX_EXTERN(__imp__sub_823263D8) {
     ++timer_calls;
     Check(ctx.r3.u64 == incoming.r3.u64 && ctx.r4.u64 == incoming.r4.u64 &&

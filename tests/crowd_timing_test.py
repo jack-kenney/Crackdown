@@ -84,6 +84,7 @@ REX_EXTERN(sub_8233B948) {++evaluations;}
 GUEST_FUNCTIONS
 ORIGINAL_FUNCTIONS
 REX_EXTERN(__imp__sub_823315E0) {ctx.r3.u32=allocation;}
+REX_EXTERN(__imp__sub_82333538) {Check(false,"Pedestrian fixture cannot update background cars");}
 REX_EXTERN(__imp__sub_82330038) {
     ++parent_calls;
     if(mode==1) sub_82331198(ctx,base);

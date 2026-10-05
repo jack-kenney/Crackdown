@@ -197,6 +197,11 @@ if(CRACKDOWN_BUILD_TESTS)
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                     --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties(crowd_timing PROPERTIES TIMEOUT 60)
+        add_test(NAME background_car_timing
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/background_car_timing_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(background_car_timing PROPERTIES TIMEOUT 60)
         add_test(NAME vehicle_lod
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vehicle_lod_test.py"
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"

@@ -380,3 +380,24 @@ address = 0x823383AC
 name = "CrackdownCrowdSteering"
 registers = ["f20"]
 after_instruction = true
+
+# Low-detail cars have their own reference-step path, separate from pedestrians.
+[[entrypoint.midasm_hook]]
+address = 0x82333584
+name = "CrackdownBackgroundCarDirection"
+registers = ["r4", "f0"]
+
+[[entrypoint.midasm_hook]]
+address = 0x823335D4
+name = "CrackdownBackgroundCarAdvance"
+registers = ["r4", "v0"]
+
+[[entrypoint.midasm_hook]]
+address = 0x823335E4
+name = "CrackdownBackgroundCarCountdown"
+registers = ["r4", "r11"]
+
+[[entrypoint.midasm_hook]]
+address = 0x82333388
+name = "CrackdownBackgroundCarAllocated"
+registers = ["r31"]
