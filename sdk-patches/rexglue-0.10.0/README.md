@@ -63,6 +63,14 @@ enabled so renderer comparisons change only the plugin.
 
 ## Build and compare
 
+For an optimized build directly usable by the Windows settings launcher, run
+`./build-local.ps1 -Optimized`. It builds the performance game and `frontend`
+plugin, stages both at `out/build/win-amd64-release`, and writes a matching
+descriptor so **Launch game** uses the tested timing flags and existing
+renderer-test save profile. Supply `-RendererSourcePath` when the matching SDK
+source is outside the workspace's default location. The separate variants
+below remain useful for comparisons.
+
 Requirements: the normal Windows build prerequisites, the released 0.10.0 SDK,
 and a Git source checkout of that exact SDK tag. GPU compilation uses the
 installed runtime and dependencies; SDK submodules need not be initialized.

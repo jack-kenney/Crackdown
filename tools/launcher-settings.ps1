@@ -44,7 +44,40 @@ function Save-LauncherSettings([string]$Path, [hashtable]$Settings) {
     [System.IO.File]::WriteAllText($Path, ($Settings | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
 }
 
-function Get-GameArguments([string]$Root, [hashtable]$Settings) {
+function Get-OptimizedBuild([string]$ExecutablePath) {
+    if (-not $ExecutablePath) { return $null }
+    $descriptorPath = Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ExecutablePath))) 'optimized-build.json'
+    if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { return $null }
+    $descriptor = Get-Content -LiteralPath $descriptorPath -Raw | ConvertFrom-Json
+    if ($descriptor.executableName -ne [IO.Path]::GetFileName($ExecutablePath)) { return $null }
+    if ($descriptor.schemaVersion -ne 1 -or $descriptor.rendererVariant -ne 'frontend') {
+        throw 'Unsupported optimized build descriptor. Rebuild with build-local.ps1 -Optimized.'
+    }
+    $directory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ExecutablePath))
+    $expected = @{
+        $descriptor.executableName = $descriptor.executableSha256
+        'rexruntime.dll' = $descriptor.dllSha256.'rexruntime.dll'
+        'rexgpu-xenos.dll' = $descriptor.dllSha256.'rexgpu-xenos.dll'
+    }
+    foreach ($file in $expected.Keys) {
+        $path = Join-Path $directory $file
+        if ($expected[$file] -notmatch '^[0-9a-fA-F]{64}$' -or
+            -not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $expected[$file]) {
+            throw 'Optimized executable and renderer do not match. Rebuild with build-local.ps1 -Optimized.'
+        }
+    }
+    return $descriptor
+}
+
+function Assert-LauncherProfileAvailable([string]$Profile) {
+    if (Get-CimInstance Win32_Process -Filter "Name = 'crackdown.exe' OR Name = 'crackdown-performance.exe' OR Name = 'crackdown-renderer.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($Profile, [StringComparison]::OrdinalIgnoreCase) -ge 0 }) {
+        throw 'Close the existing game using this save profile before launching another.'
+    }
+}
+
+function Get-GameArguments([string]$Root, [hashtable]$Settings, [switch]$IgnoreBuildProfile) {
     $flags = [ordered]@{
         game_data_root = (Join-Path $Root 'assets')
         user_data_root = (Join-Path $Root 'out/userdata')
@@ -67,6 +100,17 @@ function Get-GameArguments([string]$Root, [hashtable]$Settings) {
         sdl_direct_xinput = $Settings.directXinput
         high_resolution_timer = $true
         vsync = $true
+    }
+    $executablePath = $Settings.executablePath
+    if (-not $executablePath) { $executablePath = Join-Path $Root 'out/build/win-amd64-release/crackdown.exe' }
+    if (-not $IgnoreBuildProfile -and (Get-OptimizedBuild $executablePath)) {
+        $flags.user_data_root = Join-Path $Root 'out/userdata-renderer-test'
+        $flags.log_file = Join-Path $Root 'out/optimized-game.log'
+        $flags.native_frame_rate = 240
+        $flags.native_discard_hitch_time = $true
+        $flags.fix_guest_event_clear = $true
+        $flags.pace_gpu_wait = $true
+        $flags.vehicle_lod1_distance = 15
     }
     foreach ($key in $flags.Keys) {
         $value = $flags[$key]

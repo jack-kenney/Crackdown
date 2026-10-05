@@ -78,24 +78,28 @@ Use `-TestOnly` for the regression checks without building the game, and `-Regen
 
 For the isolated performance experiments, build with `./build-local.ps1 -PerformanceTest`, then use `Play-Crackdown-Performance-Test.cmd`. It targets 60 FPS with hitch recovery and CPU-wait fixes, reads your saved graphics settings, and copies your existing experimental profile into a separate performance-test profile on first use. Its `crackdown-performance.exe` filename allows building alongside an existing experimental session. Optional earlier vehicle mesh transitions can be tried with `./Play-Crackdown-Performance-Test.cmd -VehicleLod1Distance 15`; `-FrameRate 120`, `144`, or `240` selects a higher pacing target. See the [measurements and limits](experiments/README.md#performance-test-build) before comparing results.
 
-To build the latest optimized renderer used for the results above, also obtain
-the matching SDK source and build the `frontend` variant:
+To build the latest optimized renderer used for the results above at the
+settings launcher's standard executable path, obtain the matching SDK source
+and use `-Optimized`:
 
 ```powershell
 git clone --branch v0.10.0 --depth 1 https://github.com/rexglue/rexglue-sdk.git C:\src\rexglue-0.10.0
-.\build-local.ps1 -PerformanceTest -SdkPath C:\path\to\rexglue-sdk\win-amd64
-.\tools\build-renderer.ps1 -Variant frontend -SdkPath C:\path\to\rexglue-sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
-.\Play-Crackdown-Renderer-Optimized.cmd
+.\build-local.ps1 -Optimized -SdkPath C:\path\to\rexglue-sdk\win-amd64 -RendererSourcePath C:\src\rexglue-0.10.0
+.\Launch-Crackdown.cmd
 ```
 
-Use **Save settings** in `Launch-Crackdown.cmd` to configure graphics and audio,
-then start the optimized game with `Play-Crackdown-Renderer-Optimized.cmd`.
-It reads those saved choices and adds the tested timing/CPU-wait fixes, a
-240 FPS target and 15 m vehicle threshold. Progress is kept in
-`out/userdata-renderer-test`. The settings window's **Launch game** button
-continues to use its selected executable; choosing an executable alone does
-not add the optimized launcher's timing flags or separate profile. See the
-[renderer build guide](sdk-patches/rexglue-0.10.0/README.md) for comparisons.
+In this workspace, `./build-local.ps1 -Optimized` detects both SDK paths.
+It builds the performance executable and `frontend` renderer, then stages
+them together as `out/build/win-amd64-release/crackdown.exe` and matching DLLs.
+The settings window's **Launch game** button recognizes the staged build,
+retains your graphics/audio preferences and uses the tested timing/CPU-wait
+fixes, a 240 FPS target and 15 m vehicle threshold. Progress continues in
+`out/userdata-renderer-test`; existing renderer-test saves are retained.
+The matching build descriptor and DLLs must remain beside the executable.
+Running the ordinary build helper without `-Optimized` restores the stock
+renderer at the standard path. `-TestOnly` runs core checks without staging.
+The separate renderer comparison launchers remain available; see the
+[renderer build guide](sdk-patches/rexglue-0.10.0/README.md).
 
 For a manual build, add Clang, Ninja and the SDK's `bin` directory to `PATH`. On Windows, use an x64 Visual Studio development shell:
 ```powershell
@@ -116,11 +120,11 @@ For normal play, use one of the included launchers:
 
 | Launcher | Internal rendering | Log |
 | --- | --- | --- |
-| `Launch-Crackdown.cmd` | Configurable; defaults to 2560×1440 | `out/launcher-game.log` |
+| `Launch-Crackdown.cmd` | Configurable; defaults to 2560×1440 | `out/launcher-game.log`, or `out/optimized-game.log` for the optimized build |
 | `Play-Crackdown.cmd` | 1280×720 | `out/crackdown.log` |
 | `Play-Crackdown-1440p.cmd` | 2560×1440 | `out/crackdown-1440p.log` |
 
-The launchers use the extracted `assets` directory, store user data in `out/userdata`, and default to an eight-block audio queue to reduce playback delay. SDK 0.10.0 also defaults to eight audio blocks when launching the executable directly. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
+The launchers use the extracted `assets` directory and default to an eight-block audio queue to reduce playback delay. Standard builds store user data in `out/userdata`; the settings launcher uses `out/userdata-renderer-test` for the optimized build. SDK 0.10.0 also defaults to eight audio blocks when launching the executable directly. Startup movie skipping is enabled by default in the executable. F4 opens the SDK settings overlay; options that require a restart should be set before relaunching.
 
 ## Windows settings launcher
 

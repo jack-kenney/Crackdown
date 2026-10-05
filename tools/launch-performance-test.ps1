@@ -26,7 +26,7 @@ try {
         $profile = Join-Path $root 'out/userdata-renderer-test'
         $logName = "renderer-$Renderer-game.log"
     }
-    $arguments = @(Get-GameArguments $root $settings | Where-Object {
+    $arguments = @(Get-GameArguments $root $settings -IgnoreBuildProfile | Where-Object {
         -not $_.StartsWith('--user_data_root=') -and -not $_.StartsWith('--log_file=')
     })
     $arguments += "--user_data_root=$profile"
@@ -53,10 +53,7 @@ try {
         if (Test-Path -LiteralPath $GpuTimingPath) { throw "Choose a new GPU timing CSV path; it already exists: $GpuTimingPath" }
         [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($GpuTimingPath))
     }
-    if ($Renderer -ne 'stock' -and (Get-CimInstance Win32_Process -Filter "Name = 'crackdown-renderer.exe'" |
-        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($profile, [StringComparison]::OrdinalIgnoreCase) -ge 0 })) {
-        throw 'Close the existing renderer comparison instance before starting another with the same save profile.'
-    }
+    if ($Renderer -ne 'stock') { Assert-LauncherProfileAvailable $profile }
     # Preserve the current experimental progress in a separate profile, once.
     if (-not (Test-Path -LiteralPath $profile)) {
         $sourceProfile = Join-Path $root 'out/userdata-fps-experimental'

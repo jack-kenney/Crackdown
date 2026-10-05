@@ -189,6 +189,9 @@ $launch.Add_Click({
             throw 'Game files were not found. Extract your TU0 disc into assets, with default.xex directly inside it.'
         }
         Save-LauncherSettings $settingsPath $values
+        if (Get-OptimizedBuild $values.executablePath) {
+            Assert-LauncherProfileAvailable (Join-Path $root 'out/userdata-renderer-test')
+        }
         $start = [System.Diagnostics.ProcessStartInfo]::new()
         $start.FileName = [System.IO.Path]::GetFullPath($values.executablePath)
         $start.WorkingDirectory = $root
