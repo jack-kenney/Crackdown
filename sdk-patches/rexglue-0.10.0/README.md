@@ -1,8 +1,15 @@
-# Renderer register batching experiment
+# Renderer performance experiments
 
 `type0-register-batching.patch` applies to ReXGlue SDK v0.10.0, commit
 `f5337cdc947ff6d4c4196737e2c807a48f2a1fc2`. It changes the GPU plugin only.
 The installed SDK and the regular Crackdown build remain unchanged.
+
+The follow-up `single-range-allocation.patch` keeps a single shared-memory
+request on the stack instead of allocating vector storage. It retains the
+locked page-validity scan, residency checks and upload behavior. The separate
+`constant-packing.patch` uses a local bit scan while gathering shader constants,
+removing one exported runtime call per constant without changing their bytes
+or order. Both patches build on the register-batched renderer.
 
 ## Why this path
 
@@ -49,6 +56,7 @@ git clone --branch v0.10.0 --depth 1 https://github.com/rexglue/rexglue-sdk.git 
 .\build-local.ps1 -PerformanceTest -SdkPath C:\sdk\win-amd64
 .\tools\build-renderer.ps1 -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
 .\tools\build-renderer.ps1 -Baseline -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
+.\tools\build-renderer.ps1 -Variant optimized -SdkPath C:\sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
 ```
 
 In this development workspace, SDK/source paths are detected under `../.tools`.
@@ -56,12 +64,26 @@ The helper creates an isolated worktree at `out/renderer-sdk-source`, verifies
 its complete changes against the patch, runs the register regression suite,
 builds an optimized DLL with symbols, and stages a copy of the performance game
 in `out/variants/renderer-batched` or `renderer-baseline`. It refuses to replace
-a running variant. `-PluginOnly` skips executable staging.
+a running variant. `-PluginOnly` skips executable staging. Additional variants
+use their own `out/renderer-sdk-<variant>` worktrees, and complete combined
+diffs are verified against their patch lists, including new source files.
+
+| `-Variant` | Changes relative to the released SDK |
+|---|---|
+| `baseline` | Original TYPE0 loop, built with the same compiler |
+| `batched` | TYPE0 batching (the default comparison launcher) |
+| `ranges` | Batching plus the single-range allocation fast path |
+| `constants` | Batching plus local shader-constant bit scans |
+| `optimized` | All three CPU changes |
+| `gpu` | Batching plus optional GPU timestamp instrumentation |
+| `optimized-gpu` | All CPU changes plus optional GPU timestamps |
 
 ```powershell
 .\Play-Crackdown-Renderer-Test.cmd
 .\Play-Crackdown-Renderer-Test.cmd -Baseline
 .\Play-Crackdown-Renderer-Test.cmd -FrameRate 60 -VehicleLod1Distance 0
+.\Play-Crackdown-Renderer-Optimized.cmd
+.\Play-Crackdown-Renderer-Test.cmd -Variant constants
 ```
 
 The dedicated launcher defaults to the profiled 240 FPS target and 15 m vehicle
@@ -98,3 +120,54 @@ player-reported overlay observations, not a measured minimum or percentile.
 Vulkan is covered by the method regression but is not built or exercised in a
 game by this Windows helper. A controlled city-route comparison and broader
 campaign coverage remain open validation work.
+
+The range fixture passes 8,526 original/patched comparisons, including aliasing,
+invalid bounds, page/block boundaries, invalidation and upload failures. A
+warmed 500,000-request CPU fixture observes 500,000 temporary allocations in
+the original single-range path and zero in the patched path. The constant
+fixture passes 23,192 original/patched/oracle comparisons across both shader
+banks, sparse/dense maps, unaligned destinations and arbitrary float payloads.
+These fixture timings are not whole-game speedups.
+
+## GPU measurements
+
+The profiler is optional and operates only in the `gpu` and `optimized-gpu`
+variants. A separate timestamp heap and readback ring reuse entries only after
+the existing submission fence completes and the CPU consumes the results.
+Ring pressure drops samples rather than waiting or changing submission timing.
+An empty output path disables profiling.
+
+```powershell
+.\tools\build-renderer.ps1 -Variant optimized-gpu
+.\Play-Crackdown-Renderer-Test.cmd -Variant optimized-gpu -GpuTimingPath out\gpu-whole.csv
+# A separate run, with sampled category markers:
+.\Play-Crackdown-Renderer-Test.cmd -Variant optimized-gpu -GpuTimingPath out\gpu-details.csv -GpuTimingDetails
+```
+
+The default samples every 60 guest frames; `-GpuTimingInterval` selects a
+different interval. Start with whole-submission timing before enabling detailed
+markers: timestamp queries measure completion of preceding work and can affect
+GPU pipelining. Categories cover render-target updates, texture conversion,
+uploads, resolves/readbacks, gamma and FXAA. Their intervals are inclusive and
+can overlap, so adding category times does not produce a frame total.
+
+CSV rows describe **guest command submissions**, which may span multiple rows
+per guest frame. They exclude the presenter's separate command list, CPU
+pipeline compilation, CPU waits and monitor presentation. Query ticks use the
+direct queue's frequency. See Microsoft's [timestamp semantics](https://learn.microsoft.com/en-us/windows/win32/direct3d12/timing),
+[query rules](https://learn.microsoft.com/en-us/windows/win32/direct3d12/queries)
+and [readback synchronization](https://learn.microsoft.com/en-us/windows/win32/direct3d12/readback-data-using-heaps).
+
+For read-only frame, CPU and optional device-wide GPU observations:
+
+```powershell
+python tools/sample-renderer.py --pid <PID> --seconds 30 --offsets out/variants/renderer-optimized-gpu/offsets.json --output out/profile-sample --gpu
+python tools/summarize-gpu-timing.py --input out/gpu-details.csv --frames out/profile-sample/frames.csv --output out/profile-sample/gpu-summary.json
+```
+
+The frame sampler uses separate workers for CPU enumeration, guest-state reads
+and `nvidia-smi`; those operations no longer block counter polling. It records
+actual polling gaps and read windows. Frame intervals remain sampled estimates,
+not physical presentation timestamps. Every worker verifies the process and
+matching DLL hashes. The GPU summary excludes incomplete, dropped or invalid
+sampled frames and reports rejection counts.

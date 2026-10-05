@@ -33,6 +33,10 @@ set(gpu_sources
     d3d12/primitive_processor.cpp d3d12/render_target_cache.cpp d3d12/shader.cpp
     d3d12/shared_memory.cpp d3d12/texture_cache.cpp d3d12/deferred_command_list.cpp
     d3d12/pipeline_cache.cpp)
+option(RENDERER_GPU_TIMING "Build the optional GPU timestamp profiler" OFF)
+if(RENDERER_GPU_TIMING)
+    list(APPEND gpu_sources d3d12/gpu_timing.cpp)
+endif()
 list(TRANSFORM gpu_sources PREPEND "${REX_SOURCE}/src/graphics/")
 add_library(crackdown_renderer SHARED ${gpu_sources}
     "${COMMAND_PROCESSOR_SOURCE}" "${REX_SOURCE}/thirdparty/dxbc/DXBCChecksum.cpp")

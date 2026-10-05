@@ -1,0 +1,565 @@
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index 96d362b..a6824d3 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -26,6 +26,7 @@
+ #include <rex/graphics/command_processor.h>
+ #include <rex/graphics/d3d12/deferred_command_list.h>
+ #include <rex/graphics/d3d12/graphics_system.h>
++#include <rex/graphics/d3d12/gpu_timing.h>
+ #include <rex/graphics/d3d12/pipeline_cache.h>
+ #include <rex/graphics/d3d12/primitive_processor.h>
+ #include <rex/graphics/d3d12/render_target_cache.h>
+@@ -69,6 +70,7 @@ class D3D12CommandProcessor : public CommandProcessor {
+ 
+   uint64_t GetCurrentSubmission() const { return submission_current_; }
+   uint64_t GetCompletedSubmission() const { return submission_completed_; }
++  D3D12GpuTiming& GetGpuTiming() { return gpu_timing_; }
+ 
+   // Must be called when a subsystem does something like UpdateTileMappings so
+   // it can be awaited in CheckSubmissionFence(submission_current_) if it was
+@@ -429,6 +431,7 @@ class D3D12CommandProcessor : public CommandProcessor {
+   uint64_t submission_current_ = 1;
+   uint64_t submission_completed_ = 0;
+   ID3D12Fence* submission_fence_ = nullptr;
++  D3D12GpuTiming gpu_timing_;
+ 
+   // For awaiting non-submission queue operations such as UpdateTileMappings in
+   // AwaitAllQueueOperationsCompletion when they're queued after the latest
+diff --git a/include/rex/graphics/d3d12/deferred_command_list.h b/include/rex/graphics/d3d12/deferred_command_list.h
+index 7f1eb7f..098e47b 100644
+--- a/include/rex/graphics/d3d12/deferred_command_list.h
++++ b/include/rex/graphics/d3d12/deferred_command_list.h
+@@ -35,6 +35,13 @@ class DeferredCommandList {
+   void Reset();
+   void Execute(ID3D12GraphicsCommandList* command_list, ID3D12GraphicsCommandList1* command_list_1);
+ 
++  // Optional profiling observer, called before recording actual GPU work.
++  // Query/state commands do not notify it, so it may insert lazy timestamps.
++  void SetGpuWorkCallback(void* context, void (*callback)(void*)) {
++    gpu_work_context_ = context;
++    gpu_work_callback_ = callback;
++  }
++
+   D3D12_RECT* ClearDepthStencilViewAllocatedRects(D3D12_CPU_DESCRIPTOR_HANDLE depth_stencil_view,
+                                                   D3D12_CLEAR_FLAGS clear_flags, FLOAT depth,
+                                                   UINT8 stencil, UINT num_rects) {
+@@ -641,6 +648,8 @@ class DeferredCommandList {
+   void* WriteCommand(Command command, size_t arguments_size_bytes);
+ 
+   const D3D12CommandProcessor& command_processor_;
++  void* gpu_work_context_ = nullptr;
++  void (*gpu_work_callback_)(void*) = nullptr;
+ 
+   // uintmax_t to ensure uint64_t and pointer alignment of all structures.
+   std::vector<uintmax_t> command_stream_;
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index 19874a5..d681e91 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -1619,6 +1619,7 @@ bool D3D12CommandProcessor::SetupContext() {
+   }
+ 
+   occlusion_query_resources_available_ = InitializeOcclusionQueryResources();
++  gpu_timing_.Initialize(device, direct_queue);
+ 
+   // Just not to expose uninitialized memory.
+   std::memset(&system_constants_, 0, sizeof(system_constants_));
+@@ -1628,6 +1629,8 @@ bool D3D12CommandProcessor::SetupContext() {
+ 
+ void D3D12CommandProcessor::ShutdownContext() {
+   AwaitAllQueueOperationsCompletion();
++  gpu_timing_.PollCompleted(submission_fence_);
++  gpu_timing_.Shutdown();
+   InvalidateAllVertexBufferResidency();
+   ShutdownOcclusionQueryResources();
+ 
+@@ -2166,7 +2169,10 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+         SubmitBarriers();
+         uint32_t group_count_x = (guest_output_width + 15) / 16;
+         uint32_t group_count_y = (guest_output_height + 7) / 8;
+-        deferred_command_list_.D3DDispatch(group_count_x, group_count_y, 1);
++        {
++          D3D12GpuTiming::Scope timing(gpu_timing_, GpuTimingCategory::kGamma);
++          deferred_command_list_.D3DDispatch(group_count_x, group_count_y, 1);
++        }
+ 
+         // Apply FXAA.
+         if (use_fxaa) {
+@@ -2232,7 +2238,10 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+                                     ? fxaa_extreme_pipeline_.Get()
+                                     : fxaa_pipeline_.Get());
+             SubmitBarriers();
+-            deferred_command_list_.D3DDispatch(group_count_x, group_count_y, 1);
++            {
++              D3D12GpuTiming::Scope timing(gpu_timing_, GpuTimingCategory::kFxaa);
++              deferred_command_list_.D3DDispatch(group_count_x, group_count_y, 1);
++            }
+             PushTransitionBarrier(guest_output_resource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                   ui::d3d12::D3D12Presenter::kGuestOutputInternalState);
+           }
+@@ -2364,9 +2373,12 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+   uint32_t normalized_color_mask =
+       pixel_shader ? draw_util::GetNormalizedColorMask(regs, pixel_shader->writes_color_targets())
+                    : 0;
+-  if (!render_target_cache_->Update(is_rasterization_done, normalized_depth_control,
+-                                    normalized_color_mask, *vertex_shader)) {
+-    return false;
++  {
++    D3D12GpuTiming::Scope timing(gpu_timing_, GpuTimingCategory::kRenderTargets);
++    if (!render_target_cache_->Update(is_rasterization_done, normalized_depth_control,
++                                      normalized_color_mask, *vertex_shader)) {
++      return false;
++    }
+   }
+ 
+   // Create the pipeline (for this, need the actually used render target formats
+@@ -2630,6 +2642,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+     PROFILE_VERTICES(primitive_processing_result.host_draw_vertex_count);
+     deferred_command_list_.D3DDrawInstanced(primitive_processing_result.host_draw_vertex_count, 1,
+                                             0, 0);
++    gpu_timing_.CountDraw();
+   } else {
+     D3D12_INDEX_BUFFER_VIEW index_buffer_view;
+     index_buffer_view.SizeInBytes = primitive_processing_result.host_draw_vertex_count;
+@@ -2689,6 +2702,7 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type, uint3
+     PROFILE_VERTICES(primitive_processing_result.host_draw_vertex_count);
+     deferred_command_list_.D3DDrawIndexedInstanced(
+         primitive_processing_result.host_draw_vertex_count, 1, 0, 0, 0);
++    gpu_timing_.CountDraw();
+     if (scratch_index_buffer != nullptr) {
+       ReleaseScratchGPUBuffer(scratch_index_buffer, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+     }
+@@ -2878,6 +2892,8 @@ bool D3D12CommandProcessor::IssueCopy() {
+     return false;
+   }
+   ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(d3d12_readback_resolve));
++  gpu_timing_.CountResolve();
++  D3D12GpuTiming::Scope timing(gpu_timing_, GpuTimingCategory::kResolve);
+   if (readback_mode == ReadbackResolveMode::kDisabled) {
+     uint32_t written_address, written_length;
+     return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
+@@ -2897,6 +2913,8 @@ bool D3D12CommandProcessor::IssueCopy_ReadbackResolvePath() {
+     return true;
+   }
+ 
++  D3D12GpuTiming::Scope timing(gpu_timing_, GpuTimingCategory::kReadback);
++
+   if (!memory_->TranslatePhysical(written_address)) {
+     return true;
+   }
+@@ -3279,6 +3297,7 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
+   // await the availability of the current frame.
+   CheckSubmissionFence(is_opening_frame ? closed_frame_submissions_[frame_current_ % kQueueFrames]
+                                         : 0);
++  gpu_timing_.PollCompleted(submission_fence_);
+   // TODO(Triang3l): If failed to await (completed submission < awaited frame
+   // submission), do something like dropping the draw command that wanted to
+   // open the frame.
+@@ -3302,6 +3321,7 @@ bool D3D12CommandProcessor::BeginSubmission(bool is_guest_command) {
+     // end of the submission (when async pipeline creation requests are
+     // fulfilled).
+     deferred_command_list_.Reset();
++    gpu_timing_.BeginSubmission(deferred_command_list_, frame_current_, submission_current_);
+ 
+     // Reset cached state of the command list.
+     ff_viewport_update_needed_ = true;
+@@ -3413,6 +3433,7 @@ bool D3D12CommandProcessor::EndSubmission(bool is_swap) {
+     // Submit barriers now because resources with the queued barriers may be
+     // destroyed between frames.
+     SubmitBarriers();
++    gpu_timing_.EndSubmission(is_closing_frame);
+ 
+     ID3D12CommandQueue* direct_queue = provider.GetDirectQueue();
+ 
+diff --git a/src/graphics/d3d12/deferred_command_list.cpp b/src/graphics/d3d12/deferred_command_list.cpp
+index e6d6277..e71e52d 100644
+--- a/src/graphics/d3d12/deferred_command_list.cpp
++++ b/src/graphics/d3d12/deferred_command_list.cpp
+@@ -26,6 +26,7 @@ DeferredCommandList::DeferredCommandList(const D3D12CommandProcessor& command_pr
+ 
+ void DeferredCommandList::Reset() {
+   command_stream_.clear();
++  SetGpuWorkCallback(nullptr, nullptr);
+ }
+ 
+ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
+@@ -278,6 +279,9 @@ void DeferredCommandList::Execute(ID3D12GraphicsCommandList* command_list,
+ }
+ 
+ void* DeferredCommandList::WriteCommand(Command command, size_t arguments_size_bytes) {
++  if (gpu_work_callback_ && command <= Command::kD3DDrawInstanced) {
++    gpu_work_callback_(gpu_work_context_);
++  }
+   size_t arguments_size_elements =
+       (arguments_size_bytes + sizeof(uintmax_t) - 1) / sizeof(uintmax_t);
+   size_t offset = command_stream_.size();
+diff --git a/src/graphics/d3d12/shared_memory.cpp b/src/graphics/d3d12/shared_memory.cpp
+index a5c97a0..d133a09 100644
+--- a/src/graphics/d3d12/shared_memory.cpp
++++ b/src/graphics/d3d12/shared_memory.cpp
+@@ -306,6 +306,8 @@ bool D3D12SharedMemory::UploadRanges(
+   if (upload_page_ranges.empty()) {
+     return true;
+   }
++  auto& gpu_timing = command_processor_.GetGpuTiming();
++  D3D12GpuTiming::Scope timing(gpu_timing, GpuTimingCategory::kUploads);
+   CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
+   command_processor_.SubmitBarriers();
+   auto& command_list = command_processor_.GetDeferredCommandList();
+@@ -330,6 +332,7 @@ bool D3D12SharedMemory::UploadRanges(
+       command_list.D3DCopyBufferRegion(buffer_, upload_range_start << page_size_log2(),
+                                        upload_buffer, UINT64(upload_buffer_offset),
+                                        UINT64(upload_buffer_size));
++      gpu_timing.CountUploadBytes(upload_buffer_size);
+       uint32_t upload_buffer_pages = uint32_t(upload_buffer_size >> page_size_log2());
+       upload_range_start += upload_buffer_pages;
+       upload_range_length -= upload_buffer_pages;
+diff --git a/src/graphics/d3d12/texture_cache.cpp b/src/graphics/d3d12/texture_cache.cpp
+index 2be0e8e..0dcd9ca 100644
+--- a/src/graphics/d3d12/texture_cache.cpp
++++ b/src/graphics/d3d12/texture_cache.cpp
+@@ -1559,6 +1559,9 @@ std::unique_ptr<TextureCache::Texture> D3D12TextureCache::CreateTexture(TextureK
+ 
+ bool D3D12TextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture, bool load_base,
+                                                               bool load_mips) {
++  auto& gpu_timing = command_processor_.GetGpuTiming();
++  gpu_timing.CountTextureLoad();
++  D3D12GpuTiming::Scope timing(gpu_timing, GpuTimingCategory::kTextures);
+   D3D12Texture& d3d12_texture = static_cast<D3D12Texture&>(texture);
+   TextureKey texture_key = d3d12_texture.key();
+ 
+diff --git a/include/rex/graphics/d3d12/gpu_timing.h b/include/rex/graphics/d3d12/gpu_timing.h
+new file mode 100644
+--- /dev/null
++++ b/include/rex/graphics/d3d12/gpu_timing.h
+@@ -0,0 +1,50 @@
++#pragma once
++
++#include <cstdint>
++#include <memory>
++#include <rex/ui/d3d12/d3d12_api.h>
++
++namespace rex::graphics::d3d12 {
++class DeferredCommandList;
++
++enum class GpuTimingCategory : uint8_t {
++  kRenderTargets, kTextures, kUploads, kResolve, kReadback, kGamma, kFxaa, kCount
++};
++
++// Optional diagnostic only. It never submits, signals or waits on a queue.
++// Categories are inclusive GPU intervals beginning at their first actual GPU
++// work command; their sums may overlap and are not a partition of the total.
++class D3D12GpuTiming {
++ public:
++  class Scope {
++   public:
++    Scope(D3D12GpuTiming& owner, GpuTimingCategory category);
++    ~Scope();
++    Scope(const Scope&) = delete;
++    Scope& operator=(const Scope&) = delete;
++   private:
++    D3D12GpuTiming& owner_;
++    uint64_t token_;
++  };
++
++  D3D12GpuTiming();
++  ~D3D12GpuTiming();
++  void Initialize(ID3D12Device* device, ID3D12CommandQueue* queue);
++  void BeginSubmission(DeferredCommandList& commands, uint64_t frame, uint64_t submission);
++  void EndSubmission(bool closes_frame);
++  void PollCompleted(ID3D12Fence* fence);
++  // Call only after the owner's existing queue drain (or device loss).
++  void Shutdown();
++  void CountDraw();
++  void CountResolve();
++  void CountTextureLoad();
++  void CountUploadBytes(uint64_t bytes);
++
++ private:
++  struct State;
++  uint64_t BeginScope(GpuTimingCategory category);
++  void EndScope(uint64_t token);
++  void BeforeGpuWork();
++  std::unique_ptr<State> state_;
++};
++}  // namespace rex::graphics::d3d12
+diff --git a/src/graphics/d3d12/gpu_timing.cpp b/src/graphics/d3d12/gpu_timing.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/graphics/d3d12/gpu_timing.cpp
+@@ -0,0 +1,274 @@
++#include <rex/graphics/d3d12/gpu_timing.h>
++#include <rex/graphics/d3d12/deferred_command_list.h>
++#include <rex/cvar.h>
++#include <rex/logging.h>
++#include <array>
++#include <chrono>
++#include <cstdio>
++#include <filesystem>
++#include <limits>
++#include <wrl/client.h>
++#ifdef _WIN32
++#include <share.h>
++#endif
++
++REXCVAR_DEFINE_STRING(d3d12_gpu_timing_path, "", "GPU/D3D12",
++                     "Optional CSV of sampled guest-submission GPU timestamps; excludes presenter")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_INT32(d3d12_gpu_timing_interval, 60, "GPU/D3D12",
++                    "Sample every N guest frames for GPU timing (1 = every frame)")
++    .range(1, 10000).lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++REXCVAR_DEFINE_BOOL(d3d12_gpu_timing_details, false, "GPU/D3D12",
++                   "Include sampled inclusive GPU category timings; may affect GPU pipelining")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++namespace rex::graphics::d3d12 {
++namespace {
++constexpr uint32_t kSlots = 32, kPairs = 512, kOpenScopes = 16;
++constexpr size_t kCategories = size_t(GpuTimingCategory::kCount);
++constexpr uint32_t kNoPair = UINT32_MAX;
++}
++
++struct D3D12GpuTiming::State {
++  struct Pair { GpuTimingCategory category = GpuTimingCategory::kCount; };
++  struct Slot {
++    bool pending = false, closes_frame = false, first_in_frame = false;
++    uint64_t frame = 0, submission = 0, sample = 0;
++    uint64_t frame_skipped_submissions = 0, skipped_submissions = 0;
++    uint64_t draws = 0, resolves = 0, textures = 0, upload_bytes = 0;
++    uint32_t pairs = 0, dropped_scopes = 0, forced_scope_ends = 0;
++    std::array<Pair, kPairs> pair_info;
++  };
++  struct OpenScope {
++    uint64_t token;
++    GpuTimingCategory category;
++    uint32_t pair = kNoPair;
++    bool budget_dropped = false;
++  };
++  bool enabled = false, details = false;
++  uint32_t interval = 60, next_slot = 0, active_index = 0, open_count = 0;
++  uint64_t frequency = 0, next_token = 0, sample = 0;
++  uint64_t last_sample_frame = UINT64_MAX, skipped_submissions = 0;
++  uint64_t frame_skipped_submissions = 0;
++  Microsoft::WRL::ComPtr<ID3D12QueryHeap> heap;
++  Microsoft::WRL::ComPtr<ID3D12Resource> readback;
++  uint8_t* mapped = nullptr;
++  std::array<Slot, kSlots> slots;
++  std::array<OpenScope, kOpenScopes> open;
++  Slot* active = nullptr;
++  DeferredCommandList* commands = nullptr;
++  FILE* file = nullptr;
++  std::array<char, 65536> file_buffer;
++  std::chrono::steady_clock::time_point last_flush;
++
++  ~State() {
++    if (mapped) { D3D12_RANGE empty{0, 0}; readback->Unmap(0, &empty); }
++    if (file) std::fclose(file);
++  }
++  uint32_t Query(uint32_t pair, bool end) const {
++    return active_index * (kPairs * 2) + pair * 2 + uint32_t(end);
++  }
++  void EndPair(uint32_t pair) {
++    commands->D3DEndQuery(heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, Query(pair, true));
++  }
++};
++
++D3D12GpuTiming::D3D12GpuTiming() = default;
++D3D12GpuTiming::~D3D12GpuTiming() = default;
++D3D12GpuTiming::Scope::Scope(D3D12GpuTiming& owner, GpuTimingCategory category)
++    : owner_(owner), token_(owner.BeginScope(category)) {}
++D3D12GpuTiming::Scope::~Scope() { owner_.EndScope(token_); }
++
++void D3D12GpuTiming::Initialize(ID3D12Device* device, ID3D12CommandQueue* queue) {
++  if (REXCVAR_GET(d3d12_gpu_timing_path).empty()) return;
++  auto state = std::make_unique<State>();
++  state->interval = uint32_t(REXCVAR_GET(d3d12_gpu_timing_interval));
++  state->details = REXCVAR_GET(d3d12_gpu_timing_details);
++  D3D12_QUERY_HEAP_DESC heap_desc{};
++  heap_desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
++  heap_desc.Count = kSlots * kPairs * 2;
++  D3D12_HEAP_PROPERTIES properties{};
++  properties.Type = D3D12_HEAP_TYPE_READBACK;
++  D3D12_RESOURCE_DESC buffer{};
++  buffer.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
++  buffer.Width = uint64_t(heap_desc.Count) * sizeof(uint64_t);
++  buffer.Height = 1;
++  buffer.DepthOrArraySize = buffer.MipLevels = 1;
++  buffer.SampleDesc.Count = 1;
++  buffer.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
++  if (FAILED(queue->GetTimestampFrequency(&state->frequency)) || !state->frequency ||
++      FAILED(device->CreateQueryHeap(&heap_desc, IID_PPV_ARGS(&state->heap))) ||
++      FAILED(device->CreateCommittedResource(&properties, D3D12_HEAP_FLAG_NONE, &buffer,
++          D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&state->readback)))) {
++    REXGPU_WARN("GPU timestamp profiling unavailable; rendering continues without it");
++    return;
++  }
++  D3D12_RANGE range{0, size_t(buffer.Width)};
++  if (FAILED(state->readback->Map(0, &range, reinterpret_cast<void**>(&state->mapped)))) {
++    REXGPU_WARN("GPU timestamp readback mapping failed; profiling disabled");
++    return;
++  }
++  const auto path = std::filesystem::u8path(REXCVAR_GET(d3d12_gpu_timing_path));
++  std::error_code error;
++  if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path(), error);
++#ifdef _WIN32
++  state->file = _wfsopen(path.c_str(), L"wb", _SH_DENYWR);
++#else
++  state->file = std::fopen(path.c_str(), "wb");
++#endif
++  if (!state->file) {
++    REXGPU_WARN("GPU timestamp CSV could not be opened; profiling disabled");
++    return;
++  }
++  std::setvbuf(state->file, state->file_buffer.data(), _IOFBF, state->file_buffer.size());
++  std::fputs("sample,guest_frame,submission,first_in_frame,closes_frame,details,guest_submission_gpu_ms,"
++      "rt_update_inclusive_gpu_ms,texture_inclusive_gpu_ms,upload_inclusive_gpu_ms,"
++      "resolve_inclusive_gpu_ms,readback_inclusive_gpu_ms,gamma_inclusive_gpu_ms,fxaa_inclusive_gpu_ms,"
++      "rt_scopes,texture_scopes,upload_scopes,resolve_scopes,readback_scopes,gamma_scopes,fxaa_scopes,"
++      "recorded_guest_draws,resolves,texture_loads,upload_bytes,query_pairs,dropped_scopes,forced_scope_ends,frame_skipped_submissions,skipped_submissions,valid\n",
++      state->file);
++  std::fflush(state->file);
++  state->last_flush = std::chrono::steady_clock::now();
++  state->enabled = true;
++  state_ = std::move(state);
++  REXGPU_INFO("GPU timestamps enabled: every {} guest frames, details {} (excludes presenter)",
++              state_->interval, state_->details);
++}
++
++void D3D12GpuTiming::BeginSubmission(DeferredCommandList& commands, uint64_t frame,
++                                    uint64_t submission) {
++  if (!state_ || !state_->enabled || frame % state_->interval) return;
++  auto& s = *state_;
++  const bool first_in_frame = s.last_sample_frame != frame;
++  if (first_in_frame) {
++    s.last_sample_frame = frame; ++s.sample; s.frame_skipped_submissions = 0;
++  }
++  State::Slot* slot = nullptr;
++  for (uint32_t i = 0; i < kSlots; ++i) {
++    const uint32_t index = (s.next_slot + i) % kSlots;
++    if (!s.slots[index].pending) { slot = &s.slots[index]; s.active_index = index; break; }
++  }
++  if (!slot) { ++s.skipped_submissions; ++s.frame_skipped_submissions; return; }
++  s.next_slot = (s.active_index + 1) % kSlots;
++  *slot = State::Slot{};
++  slot->frame = frame; slot->submission = submission; slot->sample = s.sample;
++  slot->first_in_frame = first_in_frame;
++  slot->pairs = 1; // The whole-submission pair is always initialized and ended.
++  s.active = slot; s.commands = &commands; s.open_count = 0;
++  commands.D3DEndQuery(s.heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, s.Query(0, false));
++  if (s.details) {
++    commands.SetGpuWorkCallback(this, [](void* owner) {
++      static_cast<D3D12GpuTiming*>(owner)->BeforeGpuWork();
++    });
++  }
++}
++
++uint64_t D3D12GpuTiming::BeginScope(GpuTimingCategory category) {
++  if (!state_ || !state_->active || !state_->details) return 0;
++  auto& s = *state_;
++  if (s.open_count == kOpenScopes) { ++s.active->dropped_scopes; return 0; }
++  const uint64_t token = ++s.next_token;
++  s.open[s.open_count++] = {token, category};
++  return token;
++}
++
++void D3D12GpuTiming::BeforeGpuWork() {
++  auto& s = *state_;
++  for (uint32_t i = 0; i < s.open_count; ++i) {
++    auto& scope = s.open[i];
++    if (scope.pair != kNoPair || scope.budget_dropped) continue;
++    if (s.active->pairs == kPairs) {
++      scope.budget_dropped = true; ++s.active->dropped_scopes; continue;
++    }
++    scope.pair = s.active->pairs++;
++    s.active->pair_info[scope.pair].category = scope.category;
++    s.commands->D3DEndQuery(s.heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, s.Query(scope.pair, false));
++  }
++}
++
++void D3D12GpuTiming::EndScope(uint64_t token) {
++  if (!token || !state_ || !state_->active) return;
++  auto& s = *state_;
++  for (uint32_t i = 0; i < s.open_count; ++i) {
++    if (s.open[i].token != token) continue;
++    if (s.open[i].pair != kNoPair) s.EndPair(s.open[i].pair);
++    for (uint32_t j = i + 1; j < s.open_count; ++j) s.open[j - 1] = s.open[j];
++    --s.open_count;
++    return;
++  }
++}
++
++void D3D12GpuTiming::EndSubmission(bool closes_frame) {
++  if (!state_ || !state_->active) return;
++  auto& s = *state_;
++  // Readback paths can submit from inside an enclosing scope. Finish all pairs
++  // in this submission; late RAII destructors have no token to match afterward.
++  s.commands->SetGpuWorkCallback(nullptr, nullptr);
++  for (uint32_t i = 0; i < s.open_count; ++i) {
++    if (s.open[i].pair != kNoPair) s.EndPair(s.open[i].pair);
++    // Even a lazy scope can lose category coverage for work after this flush.
++    ++s.active->forced_scope_ends;
++  }
++  s.open_count = 0;
++  s.EndPair(0);
++  const uint32_t first_query = s.active_index * kPairs * 2;
++  s.commands->D3DResolveQueryData(s.heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP,
++      first_query, s.active->pairs * 2, s.readback.Get(), uint64_t(first_query) * sizeof(uint64_t));
++  s.active->closes_frame = closes_frame;
++  s.active->frame_skipped_submissions = s.frame_skipped_submissions;
++  s.active->skipped_submissions = s.skipped_submissions;
++  s.active->pending = true;
++  s.active = nullptr; s.commands = nullptr;
++}
++
++void D3D12GpuTiming::PollCompleted(ID3D12Fence* fence) {
++  if (!state_ || !state_->enabled || !fence) return;
++  auto& s = *state_;
++  const uint64_t completed = fence->GetCompletedValue();
++  if (completed == UINT64_MAX) { s.enabled = false; return; }
++  for (uint32_t index = 0; index < kSlots; ++index) {
++    auto& slot = s.slots[index];
++    if (!slot.pending || slot.submission > completed) continue;
++    const auto* ticks = reinterpret_cast<const uint64_t*>(s.mapped) + index * kPairs * 2;
++    std::array<double, kCategories> totals{};
++    std::array<uint32_t, kCategories> counts{};
++    bool valid = true;
++    double whole_ms = 0;
++    for (uint32_t pair = 0; pair < slot.pairs; ++pair) {
++      const uint64_t start = ticks[pair * 2], end = ticks[pair * 2 + 1];
++      if (end < start) { valid = false; continue; }
++      const double milliseconds = double(end - start) * 1000.0 / double(s.frequency);
++      if (!pair) whole_ms = milliseconds;
++      else { const size_t category = size_t(slot.pair_info[pair].category);
++        totals[category] += milliseconds; ++counts[category]; }
++    }
++    std::fprintf(s.file, "%llu,%llu,%llu,%u,%u,%u,%.6f", (unsigned long long)slot.sample,
++        (unsigned long long)slot.frame, (unsigned long long)slot.submission,
++        unsigned(slot.first_in_frame), unsigned(slot.closes_frame), unsigned(s.details), whole_ms);
++    for (double total : totals) std::fprintf(s.file, ",%.6f", total);
++    for (uint32_t count : counts) std::fprintf(s.file, ",%u", count);
++    std::fprintf(s.file, ",%llu,%llu,%llu,%llu,%u,%u,%u,%llu,%llu,%u\n",
++        (unsigned long long)slot.draws, (unsigned long long)slot.resolves,
++        (unsigned long long)slot.textures, (unsigned long long)slot.upload_bytes,
++        slot.pairs, slot.dropped_scopes, slot.forced_scope_ends,
++        (unsigned long long)slot.frame_skipped_submissions,
++        (unsigned long long)slot.skipped_submissions, unsigned(valid));
++    slot.pending = false; // Reuse only after GPU completion and CPU consumption.
++  }
++  const auto now = std::chrono::steady_clock::now();
++  if (now - s.last_flush >= std::chrono::seconds(1)) {
++    std::fflush(s.file); s.last_flush = now;
++  }
++}
++
++void D3D12GpuTiming::Shutdown() {
++  if (state_ && state_->commands) state_->commands->SetGpuWorkCallback(nullptr, nullptr);
++  state_.reset();
++}
++void D3D12GpuTiming::CountDraw() { if (state_ && state_->active) ++state_->active->draws; }
++void D3D12GpuTiming::CountResolve() { if (state_ && state_->active) ++state_->active->resolves; }
++void D3D12GpuTiming::CountTextureLoad() { if (state_ && state_->active) ++state_->active->textures; }
++void D3D12GpuTiming::CountUploadBytes(uint64_t bytes) {
++  if (state_ && state_->active) state_->active->upload_bytes += bytes;
++}
++}  // namespace rex::graphics::d3d12

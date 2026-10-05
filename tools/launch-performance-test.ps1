@@ -1,7 +1,11 @@
 param(
     [ValidateSet(60, 120, 144, 240)][int]$FrameRate = 60,
     [ValidateRange(0, 100)][double]$VehicleLod1Distance = 0,
-    [ValidateSet('stock', 'baseline', 'batched')][string]$Renderer = 'stock',
+    [ValidateSet('stock', 'baseline', 'batched', 'ranges', 'constants', 'optimized', 'gpu', 'optimized-gpu')]
+    [string]$Renderer = 'stock',
+    [string]$GpuTimingPath,
+    [ValidateRange(1, 10000)][int]$GpuTimingInterval = 60,
+    [switch]$GpuTimingDetails,
     [switch]$PrintArguments
 )
 $ErrorActionPreference = 'Stop'
@@ -32,9 +36,22 @@ try {
     $arguments += '--fix_guest_event_clear=true'
     $arguments += '--pace_gpu_wait=true'
     $arguments += "--vehicle_lod1_distance=$($VehicleLod1Distance.ToString([System.Globalization.CultureInfo]::InvariantCulture))"
+    if ($GpuTimingPath) {
+        if ($Renderer -notin @('gpu', 'optimized-gpu')) { throw 'GPU timings require the gpu or optimized-gpu renderer variant.' }
+        $GpuTimingPath = [System.IO.Path]::GetFullPath($GpuTimingPath)
+        $arguments += "--d3d12_gpu_timing_path=$GpuTimingPath"
+        $arguments += "--d3d12_gpu_timing_interval=$GpuTimingInterval"
+        $arguments += "--d3d12_gpu_timing_details=$($GpuTimingDetails.IsPresent.ToString().ToLowerInvariant())"
+    } elseif ($GpuTimingDetails) {
+        throw '-GpuTimingDetails also requires -GpuTimingPath.'
+    }
     if ($PrintArguments) {
         [pscustomobject]@{ executable = $executable; arguments = $arguments } | ConvertTo-Json
         exit 0
+    }
+    if ($GpuTimingPath) {
+        if (Test-Path -LiteralPath $GpuTimingPath) { throw "Choose a new GPU timing CSV path; it already exists: $GpuTimingPath" }
+        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($GpuTimingPath))
     }
     if ($Renderer -ne 'stock' -and (Get-CimInstance Win32_Process -Filter "Name = 'crackdown-renderer.exe'" |
         Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($profile, [StringComparison]::OrdinalIgnoreCase) -ge 0 })) {

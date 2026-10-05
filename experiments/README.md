@@ -498,3 +498,46 @@ recorded percentile, measured minimum, or controlled route comparison. It adds
 city-play evidence to the Agency measurement; exact duration and a full
 frame-time trace were not collected. Further optimization should compare
 against this batched build, with particular attention to the remaining dips.
+
+### Follow-up CPU paths and GPU instrumentation (October 5)
+
+Two additional SDK patches remove a temporary allocation for each single-range
+shared-memory request and use local bit scans when gathering shader constants.
+The allocation path still performs the same locked page scan, residency checks
+and uploads. Constant packing retains the same bytes, order and dirty flags.
+Together with TYPE0 batching, the three fixtures pass 49,346 comparisons.
+
+The `optimized` variant was compared against `batched` at the same Agency
+position/camera and saved settings listed above, using copies of the latest
+renderer-test save. Four 20-second observations used an independent frame
+polling process, with CPU/guest-state and GPU sampling in separate workers:
+
+| Order | Variant | Guest FPS |
+|---|---|---:|
+| A | Batched TYPE0 | 93.45 |
+| B | Batched + ranges + constant packing | 96.95 |
+| B, same-process repeat | Batched + ranges + constant packing | 97.30 |
+| A, fresh-launch return | Batched TYPE0 | 91.90 |
+
+This is evidence of a small gain in this fixed view (roughly 3–6%), with no
+observed visual regression. It does not establish a city-route gain or separate
+the contribution of the two patches. Each observed frame increment was captured
+individually, player/camera coordinates remained fixed, and the hitch-discard
+counter did not increase within any sample. Raw artifacts are under
+`out/performance/live-46800/keep-reference-02`,
+`live-37532/keep-combined-{01,02}` and `live-21816/keep-reference-return`.
+An earlier legacy-sampler reference measured 93.71 FPS; its delayed polling
+windows are not used to make frame-time claims.
+
+An eight-second instruction sample from the first batched Agency run collected
+521 graphics-thread observations. `UpdateBindings` accounted for about 4.4%
+and `SharedMemory::RequestRanges` 1.5%; the remaining register-write family was
+roughly 18%. These are exclusive sampled costs in the Agency view, and cannot
+be directly compared to the prior 43% register share from a different busy
+city view. A separate hot thread was the host DXGI vblank worker, not a guest
+event worker; CPU totals include that host thread.
+
+`Play-Crackdown-Renderer-Optimized.cmd` selects both new CPU changes. The
+existing renderer-test launcher still defaults to TYPE0 batching alone.
+The `gpu` and `optimized-gpu` variants add optional, sampled GPU timestamps;
+see [build and profiling instructions](../sdk-patches/rexglue-0.10.0/README.md#gpu-measurements).

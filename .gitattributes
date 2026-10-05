@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Git applies these against normalized index blobs, including on Windows.
+# Unified diff context includes intentionally space-only lines.
+*.patch text eol=lf -whitespace

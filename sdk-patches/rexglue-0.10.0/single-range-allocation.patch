@@ -1,0 +1,129 @@
+diff --git a/src/graphics/shared_memory.cpp b/src/graphics/shared_memory.cpp
+index ec0df7c..742bbf5 100644
+--- a/src/graphics/shared_memory.cpp
++++ b/src/graphics/shared_memory.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <algorithm>
+ #include <cstring>
++#include <span>
+ #include <utility>
+ 
+ #include <rex/assert.h>
+@@ -342,48 +343,68 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+     return true;
+   }
+ 
+-  // Some texture or buffer is empty, for example - safe to draw in this case.
++  // Draw-time vertex and index requests usually contain just one range. Keep
++  // a copy on the stack rather than allocating the sorting/merging scratch.
++  // Copy even this case: caller storage may alias upload_ranges_, cleared below.
++  std::pair<uint32_t, uint32_t> single_range;
+   std::vector<std::pair<uint32_t, uint32_t>> merged_ranges;
+-  merged_ranges.reserve(count);
+-  for (size_t i = 0; i < count; ++i) {
+-    uint32_t start = ranges[i].first;
+-    uint32_t length = ranges[i].second;
+-    if (!length) {
+-      continue;
++  std::span<const std::pair<uint32_t, uint32_t>> requested_ranges;
++  if (count == 1) {
++    single_range = ranges[0];
++    if (!single_range.second) {
++      return true;
+     }
+-    if (start > kBufferSize || (kBufferSize - start) < length) {
++    if (single_range.first > kBufferSize ||
++        (kBufferSize - single_range.first) < single_range.second) {
+       return false;
+     }
+-    merged_ranges.emplace_back(start, length);
+-  }
+-  if (merged_ranges.empty()) {
+-    return true;
++    requested_ranges = {&single_range, 1};
++  } else {
++    // Some texture or buffer is empty, for example - safe to draw in this case.
++    merged_ranges.reserve(count);
++    for (size_t i = 0; i < count; ++i) {
++      uint32_t start = ranges[i].first;
++      uint32_t length = ranges[i].second;
++      if (!length) {
++        continue;
++      }
++      if (start > kBufferSize || (kBufferSize - start) < length) {
++        return false;
++      }
++      merged_ranges.emplace_back(start, length);
++    }
++    if (merged_ranges.empty()) {
++      return true;
++    }
+   }
+ 
+   SCOPE_profile_cpu_f("gpu");
+ 
+-  std::sort(merged_ranges.begin(), merged_ranges.end(),
+-            [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
+-              return a.first < b.first;
+-            });
+-  size_t merged_write = 0;
+-  for (size_t i = 1; i < merged_ranges.size(); ++i) {
+-    std::pair<uint32_t, uint32_t>& range_previous = merged_ranges[merged_write];
+-    const std::pair<uint32_t, uint32_t>& range_current = merged_ranges[i];
+-    uint64_t previous_end = uint64_t(range_previous.first) + uint64_t(range_previous.second);
+-    uint64_t current_start = uint64_t(range_current.first);
+-    if (current_start <= previous_end) {
+-      uint64_t current_end = current_start + uint64_t(range_current.second);
+-      if (current_end > previous_end) {
+-        range_previous.second = uint32_t(current_end - uint64_t(range_previous.first));
++  if (count != 1) {
++    std::sort(merged_ranges.begin(), merged_ranges.end(),
++              [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
++                return a.first < b.first;
++              });
++    size_t merged_write = 0;
++    for (size_t i = 1; i < merged_ranges.size(); ++i) {
++      std::pair<uint32_t, uint32_t>& range_previous = merged_ranges[merged_write];
++      const std::pair<uint32_t, uint32_t>& range_current = merged_ranges[i];
++      uint64_t previous_end = uint64_t(range_previous.first) + uint64_t(range_previous.second);
++      uint64_t current_start = uint64_t(range_current.first);
++      if (current_start <= previous_end) {
++        uint64_t current_end = current_start + uint64_t(range_current.second);
++        if (current_end > previous_end) {
++          range_previous.second = uint32_t(current_end - uint64_t(range_previous.first));
++        }
++      } else {
++        merged_ranges[++merged_write] = range_current;
+       }
+-    } else {
+-      merged_ranges[++merged_write] = range_current;
+     }
++    merged_ranges.resize(merged_write + 1);
++    requested_ranges = merged_ranges;
+   }
+-  merged_ranges.resize(merged_write + 1);
+ 
+-  for (const std::pair<uint32_t, uint32_t>& range : merged_ranges) {
++  for (const std::pair<uint32_t, uint32_t>& range : requested_ranges) {
+     if (!EnsureHostGpuMemoryAllocated(range.first, range.second)) {
+       return false;
+     }
+@@ -405,7 +426,7 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+   };
+   {
+     auto global_lock = global_critical_region_.Acquire();
+-    for (const std::pair<uint32_t, uint32_t>& range : merged_ranges) {
++    for (const std::pair<uint32_t, uint32_t>& range : requested_ranges) {
+       uint32_t page_first = range.first >> page_size_log2_;
+       uint32_t page_last = (range.first + range.second - 1) >> page_size_log2_;
+       uint32_t block_first = page_first >> 6;
+@@ -457,7 +478,7 @@ bool SharedMemory::RequestRanges(const std::pair<uint32_t, uint32_t>* ranges, si
+ 
+   COUNT_profile_set("gpu/shared_memory/request_ranges_count", uint32_t(count));
+   COUNT_profile_set("gpu/shared_memory/request_ranges_merged_count",
+-                    uint32_t(merged_ranges.size()));
++                    uint32_t(requested_ranges.size()));
+   COUNT_profile_set("gpu/shared_memory/request_ranges_upload_count",
+                     uint32_t(upload_ranges_.size()));
+ 
