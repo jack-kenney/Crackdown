@@ -665,6 +665,13 @@ The default `frontend` renderer also passed a short camera/movement/jump/two-sho
 smoke test after timing, with continued rendering and the expected ammunition
 change. That smoke test is not a city benchmark or campaign stability test.
 
+Subsequent hands-on testing of this build reported 90–100 FPS in most areas,
+dips into the 60s in busier scenes, and a lowest observed rate of approximately
+50 FPS in the same crowded areas that previously slowed down substantially.
+This provides city-play evidence beyond the fixed Agency view. The figures
+are player observations, not a recorded minimum, percentile or controlled
+route comparison; no session duration was specified.
+
 `Play-Crackdown-Renderer-Optimized.cmd` now selects `frontend`. The earlier
 three-patch renderer remains available with
 `Play-Crackdown-Renderer-Test.cmd -Variant optimized`. Control-only and

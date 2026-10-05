@@ -2,9 +2,9 @@
 
 An experimental native Windows recompilation of **Crackdown (2007), TU0**. Campaign gameplay is now playable in hands-on testing, with working movie and gameplay audio, controller input, and 1440p rendering. Development and testing are ongoing; full campaign completion has not been verified.
 
-This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crackdown) and uses [ReXGlue SDK 0.10.0](https://github.com/rexglue/rexglue-sdk/releases/tag/v0.10.0), pinned to that exact version. The upgrade is available on `upgrade/rexglue-0.10.0`; the prior 0.2.2 build remains available on `main` for comparison.
+This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crackdown) and uses [ReXGlue SDK 0.10.0](https://github.com/rexglue/rexglue-sdk/releases/tag/v0.10.0), pinned to that exact version. `main` contains the SDK upgrade, gameplay/audio fixes, graphics enhancements, performance builds and Windows settings launcher. The prior 0.2.2 build is preserved at [36a7446](https://github.com/jack-kenney/Crackdown/commit/36a7446).
 
-## Current state — October 4, 2026
+## Current state — October 5, 2026
 
 | Area | Available now |
 | --- | --- |
@@ -18,7 +18,7 @@ This fork builds on [SkiddyToast/Crackdown](https://github.com/SkiddyToast/Crack
 
 The measured performance samples used a Ryzen 7 9800X3D and RTX 5070 Ti on Windows. They establish behavior on that system, not minimum requirements or performance on other hardware. Direct XInput and normal SDL polling felt similar in hands-on comparison; no controller-latency improvement is claimed.
 
-Historical gameplay and performance measurements below used SDK 0.2.2. The 0.10.0 migration regenerates TU0 code and ports the host, input, cache and launcher interfaces. Gameplay testing remains separate from automated checks.
+Earlier audio and pacing measurements used SDK 0.2.2; the SDK validation and renderer measurements below use 0.10.0. The migration regenerates TU0 code and ports the host, input, cache and launcher interfaces. Gameplay testing remains separate from automated checks.
 
 Known limits include intermittent startup/sign-in crashes, unverified full-campaign completion and long-term save reliability, and movie synchronization that still needs validation after the audio queue change. The Linux presets have not been validated. Higher rendering resolution uses the original textures; enhanced assets and a custom in-game graphics menu are future work.
 
@@ -31,6 +31,8 @@ Busy-scene performance work now includes an isolated [renderer register-batching
 Further CPU changes remove temporary memory-range allocations, streamline shader-constant packing, batch control-register writes and reuse command storage. `Play-Crackdown-Renderer-Optimized.cmd` now selects the `frontend` build (`tools/build-renderer.ps1 -Variant frontend`). At the fixed 1440p Agency view it measured **108.8–112.2 guest FPS**, versus 97.6 on a fresh return to the earlier three-patch `optimized` build, an approximately **11–15% gain**. Earlier reference samples were lower, illustrating run variation. These are submission rates from a stationary view; city-route validation remains pending. Shader-constant reuse is available separately but added no clear gain in the combined comparison. See the [measurements](experiments/README.md#further-cpu-command-processing-october-5) and [build options](sdk-patches/rexglue-0.10.0/README.md).
 
 The first [GPU cost measurements](experiments/README.md#gpu-costs-at-the-fixed-agency-view) point toward CPU command processing as the remaining limit in that view: 720p roughly halves guest GPU time versus 1440p, while both run near 97–98 guest FPS. Render-target transfers and resolves cost far more GPU time than final FXAA. These are fixed-view observations, with broader city profiling still needed.
+
+Subsequent hands-on play with the latest optimized renderer reported **90–100 FPS in most areas**, dips into the **60s in busier scenes**, and a lowest observed rate of roughly **50 FPS in the previously crowded areas**. These are player observations, not recorded percentiles or a guaranteed minimum. A controlled city-route comparison remains pending.
 
 The current Windows regression suite passes 24 checks, including launcher preferences, XUI package preservation/replacement, actual TU0 timing and vehicle LOD routines, callback registration, GPU polling, and native event synchronization. The camera, frame-rate and performance hooks are included only in an experimental build.
 
@@ -59,7 +61,7 @@ The SDK supplies SDL3 input with queued events, native XInput, the corrected Bin
 Clone this fork and enter the repository:
 
 ```powershell
-git clone --branch upgrade/rexglue-0.10.0 https://github.com/jack-kenney/Crackdown.git
+git clone https://github.com/jack-kenney/Crackdown.git
 cd Crackdown
 ```
 
@@ -75,6 +77,25 @@ Alternatively, set `REXGLUE_SDK_ROOT` to that installed SDK directory. In this d
 Use `-TestOnly` for the regression checks without building the game, and `-Regenerate` after changing the XEX or recompilation configuration. Close the game before rebuilding its executable.
 
 For the isolated performance experiments, build with `./build-local.ps1 -PerformanceTest`, then use `Play-Crackdown-Performance-Test.cmd`. It targets 60 FPS with hitch recovery and CPU-wait fixes, reads your saved graphics settings, and copies your existing experimental profile into a separate performance-test profile on first use. Its `crackdown-performance.exe` filename allows building alongside an existing experimental session. Optional earlier vehicle mesh transitions can be tried with `./Play-Crackdown-Performance-Test.cmd -VehicleLod1Distance 15`; `-FrameRate 120`, `144`, or `240` selects a higher pacing target. See the [measurements and limits](experiments/README.md#performance-test-build) before comparing results.
+
+To build the latest optimized renderer used for the results above, also obtain
+the matching SDK source and build the `frontend` variant:
+
+```powershell
+git clone --branch v0.10.0 --depth 1 https://github.com/rexglue/rexglue-sdk.git C:\src\rexglue-0.10.0
+.\build-local.ps1 -PerformanceTest -SdkPath C:\path\to\rexglue-sdk\win-amd64
+.\tools\build-renderer.ps1 -Variant frontend -SdkPath C:\path\to\rexglue-sdk\win-amd64 -SourcePath C:\src\rexglue-0.10.0
+.\Play-Crackdown-Renderer-Optimized.cmd
+```
+
+Use **Save settings** in `Launch-Crackdown.cmd` to configure graphics and audio,
+then start the optimized game with `Play-Crackdown-Renderer-Optimized.cmd`.
+It reads those saved choices and adds the tested timing/CPU-wait fixes, a
+240 FPS target and 15 m vehicle threshold. Progress is kept in
+`out/userdata-renderer-test`. The settings window's **Launch game** button
+continues to use its selected executable; choosing an executable alone does
+not add the optimized launcher's timing flags or separate profile. See the
+[renderer build guide](sdk-patches/rexglue-0.10.0/README.md) for comparisons.
 
 For a manual build, add Clang, Ninja and the SDK's `bin` directory to `PATH`. On Windows, use an x64 Visual Studio development shell:
 ```powershell
