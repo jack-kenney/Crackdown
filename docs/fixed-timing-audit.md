@@ -32,8 +32,8 @@ examples show why replacing every matching number would break unrelated code.
 
 | Path | Evidence | Status and next check |
 | --- | --- | --- |
-| Distant crowd movement | `82330B68`, `82342470` and `82338220` calculate object field +180 using walk speed times 1/30 or run speed times 1/15. `82331198` advances position +128 by a stored step vector +112 and decrements segment steps +176 once per call. | Strong candidate for distant NPC/car movement. Measure actual invocation cadence and transitions before changing the authored steps. |
-| Distant crowd animation | `82330888` advances phase +228 using multiplier +184 times `0.0333333`, then wraps against clip length and evaluates the animation. | Strong candidate for the reported fast distant animations. This rounded literal was absent from the earlier exact 1/30 search. Confirm cadence alongside movement. |
+| Distant crowd movement | `82330B68`, `82342470` and `82338220` calculate object field +180 using walk speed times 1/30 or run speed times 1/15. `82331198` advances position +128 by a stored step vector +112 and decrements segment steps +176 once per call. | Native elapsed-time displacement and fractional reference-step countdown implemented. Generated-routine tests pass; human testing confirms normal crowd movement. |
+| Distant crowd animation | `82330888` advances phase +228 using multiplier +184 times `0.0333333`, then wraps against clip length and evaluates the animation. | Native elapsed-time interval implemented; original wrapping and LOD3/4/5 evaluation retained. Generated-routine tests pass; human testing confirms normal crowd animation. |
 | Object state timer | `8252EDA0` adds 1/30 to field +2404 each call before its state machine. | A real per-call time accumulator. Object role and call frequency remain unresolved; no demonstrated connection to interrupted Agency speech. |
 | Character proxy timer | `822AB708` contains a branch adding 0.05 to a component field. | Audit the branch, field role and accumulated-time consumers. A fixed value here does not alone prove that it drives movement. |
 | Two related object state timers | `8259A738` and `8259AD98` add 0.05 to field +368 and compare it with another threshold. | Verify object identity and how often these states run. |
@@ -48,9 +48,46 @@ The distant crowd uses dedicated LOD4 walk/run clips and LOD4/LOD5 civilian car
 assets. Its pool has a signature of `0xACED0FF0`, 1,500 slots of 672 bytes,
 starting at `0x82E64090`. This is separate from the nearby Havok character
 controller traced for the player's step-down correction. It fits the user's
-distance-dependent observation, but call frequency and causal fixes are still
-unverified. The crowd also smooths steering with a fixed per-update coefficient;
-that response deserves an elapsed-time audit even after movement is corrected.
+distance-dependent observation. Stable-path samples before the correction showed
+animation advancing about 1.85 to 2.22 times published elapsed simulation time.
+These asynchronous samples support the static per-update finding; they do not
+provide an exact invocation trace. The fixed 0.05 steering coefficient is now
+normalized to preserve its response over elapsed time as well.
+
+## Crowd correction
+
+`src/crowd_timing.cpp` uses ReXGlue instruction hooks at `823311C8` / `823311D8`
+for movement and segment countdown, `823308E0` for the animation interval, and
+`823383AC` for steering. It consumes published retained milliseconds at
+`82D99128`, expressed as reference updates (`milliseconds * 30 / 1000`). Authored
+walk/run vectors, including the run multiplier, remain unchanged in memory.
+Movement scales only the consumed XYZ displacement; W stays untouched.
+Fractional reference updates are kept in host state per pool slot and reset on
+allocation, path/count rewrites or clock resets. Movement caps at the remaining
+segment; original path initialization runs when its countdown reaches zero.
+Animation keeps the original wrapping, clip selection and evaluation routines.
+Steering uses `1 - pow(0.95, reference_updates)` in place of the per-call 0.05.
+
+The correction is active only with native timing and
+`--normalize_crowd_timing=true` (the default). Original timing, explicit opt-out,
+invalid clock samples and non-pool objects preserve original behavior. The
+separate `Play-Crackdown-Crowd-Timing.cmd` launcher enables it together with the
+existing step-down correction; baseline diagnostic launchers explicitly disable
+crowd normalization. The running standard executable is not replaced by staging
+this diagnostic build. See [physics investigation](physics-investigation.md).
+
+The integration fixture executes locally generated TU0 movement and animation
+routines at 30/60/120/144/240 Hz, with variable millisecond deltas. It checks
+reference-rate displacement/countdown, animation phase in LOD3/4/5, clip wrapping,
+slot/path/count resets, segment boundaries, steering response and unchanged W.
+Pass-through comparisons include complete PPC contexts, object/stack memory and
+the crowd pool's animation evaluation registry. Human testing confirmed that pedestrian movement and animation look normal.
+A 20-second live capture recorded median elapsed-time ratios of 0.999999 for
+animation (17,085 stable pairs) and 1.000040 for projected displacement
+(15,105 pairs), versus about 2.222 before the fix. These are filtered asynchronous
+samples, not exact update traces. A broader capture also found approximately
+1.00 movement ratios for unselected pool objects. The user still reports fast
+background cars; traffic driving needs a separate investigation.
 
 The SDK's UI has a 1/60 fallback only when no valid elapsed interval is available.
 Its normal ImGui delta uses elapsed time. Guest vblank uses the configured video
@@ -103,7 +140,7 @@ clobbers, branch-dependent bases, retained nonvolatile bases and counters kept
 separate from timestep evidence. The audit adds no timing changes to the running
 game.
 
-All 29 regression tests passed. The buffered trace test now retries missing
+All 30 regression tests passed, including the crowd integration fixture. The buffered trace test now retries missing
 records while rechecking complete contexts and guest memory on every attempt,
 respecting the producer's intentional nonblocking drops. Ten consecutive runs
 of that previously flaky test also passed.

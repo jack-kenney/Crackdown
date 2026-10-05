@@ -3,6 +3,7 @@
 #include "native_timing.h"
 #include "frame_pacing.h"
 #include "timestep_policy.h"
+#include "src/crowd_timing.h"
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <atomic>
@@ -46,6 +47,7 @@ REX_EXTERN(__imp__sub_823263D8);
 REX_EXTERN(sub_823263D8) {
     using namespace crackdown::experiments;
     const auto target = NativeFrameRate();
+    crackdown::SetCrowdNativeTiming(target != 0);
     // Only the audited main-loop call; replay or other callers keep their ABI.
     if (!target || uint32_t(ctx.lr) != 0x826A774C) {
         __imp__sub_823263D8(ctx, base);

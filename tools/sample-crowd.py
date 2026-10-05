@@ -41,6 +41,7 @@ def capture(args):
         session = dict(pid=args.pid, start_utc=dt.datetime.now(dt.timezone.utc).isoformat(),
                        identity=probe.identity, duration_s=args.duration,
                        interval_ms=args.interval_ms,
+                       all_allocated=args.all_allocated, slot_stride=args.slot_stride,
                        measurement='Read-only asynchronous TU0 crowd samples. Pool mode and fields '
                        'are guest observations, not recovered source names. Bulk reads may '
                        'overlap updates; position differences are not authoritative velocity.')
@@ -54,6 +55,13 @@ def capture(args):
                 before = time.perf_counter()
                 try:
                     stamp = probe.read_guest(0x82D99128, 8)
+                    allocated = None
+                    if args.all_allocated:
+                        allocation = probe.read_guest(CROWD, 9056)
+                        count = struct.unpack_from('>I', allocation, 9024)[0]
+                        if count > CAPACITY:
+                            raise RuntimeError('Crowd allocation count exceeds pool capacity.')
+                        allocated = set(struct.unpack_from(f'>{count}I', allocation, 24))
                     raw = probe.read_guest(POOL, CAPACITY * STRIDE)
                     stable = stamp == probe.read_guest(0x82D99128, 8)
                 except (OSError, RuntimeError) as exc:
@@ -64,7 +72,7 @@ def capture(args):
                 for slot in range(CAPACITY):
                     offset = slot * STRIDE
                     mode = struct.unpack_from('>I', raw, offset + 220)[0]
-                    if not mode:
+                    if not mode and (allocated is None or POOL + offset not in allocated or slot % args.slot_stride):
                         continue
                     row = dict(seconds=before - origin, read_ms=read_ms, step_ms=step,
                                total_ms=total, slot=slot, object=hex(POOL + offset),
@@ -114,7 +122,13 @@ if __name__ == '__main__':
     parser.add_argument('--metadata', type=Path, default=ROOT / 'out/build/win-amd64-release/offsets.json')
     parser.add_argument('--duration', type=float, default=120)
     parser.add_argument('--interval-ms', type=float, default=16)
+    parser.add_argument('--all-allocated', action='store_true',
+                        help='Include allocated objects outside the selected crowd set (+220 == 0).')
+    parser.add_argument('--slot-stride', type=int, default=1,
+                        help='Sample every Nth unselected pool slot; selected objects are always recorded.')
     args = parser.parse_args()
     if not 0 < args.duration <= 3600 or not 8 <= args.interval_ms <= 1000:
         parser.error('Use duration in (0, 3600] seconds and interval in [8, 1000] ms.')
+    if not 1 <= args.slot_stride <= CAPACITY:
+        parser.error('Use a slot stride in [1, 1500].')
     raise SystemExit(capture(args))

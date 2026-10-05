@@ -76,6 +76,9 @@ void ResetEngine(uint8_t* base) {
 
 // These original boundaries model timer output and a real commit. The earlier
 // tests/native_timing_test.py separately exercises the generated timer itself.
+REX_EXTERN(__imp__sub_823315E0) { Check(false, "clock hook cannot allocate crowd objects"); }
+REX_EXTERN(__imp__sub_82330038) { Check(false, "clock hook cannot update crowd objects"); }
+REX_EXTERN(__imp__sub_82338220) { Check(false, "clock hook cannot update crowd steering"); }
 REX_EXTERN(__imp__sub_823263D8) {
     ++timer_calls;
     Check(ctx.r3.u64 == incoming.r3.u64 && ctx.r4.u64 == incoming.r4.u64 &&

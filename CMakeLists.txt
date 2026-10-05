@@ -34,6 +34,7 @@ set(CRACKDOWN_SOURCES
     src/controller_input.cpp
     src/startup_movies.cpp
     src/graphics_options.cpp
+    src/crowd_timing.cpp
     src/enumeration.cpp
 )
 
@@ -116,7 +117,7 @@ if(CRACKDOWN_BUILD_TESTS)
         target_include_directories(crackdown_fps60_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
         target_link_libraries(crackdown_fps60_tests PRIVATE rex::runtime)
         add_test(NAME fps60_experiment_guards COMMAND crackdown_fps60_tests)
-        add_executable(crackdown_native_timing_tests experiments/native_timing_tests.cpp experiments/native_timing.cpp)
+        add_executable(crackdown_native_timing_tests experiments/native_timing_tests.cpp experiments/native_timing.cpp src/crowd_timing.cpp)
         target_include_directories(crackdown_native_timing_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" generated)
         target_link_libraries(crackdown_native_timing_tests PRIVATE rex::runtime)
         add_test(NAME native_timing_hooks COMMAND crackdown_native_timing_tests)
@@ -191,6 +192,11 @@ if(CRACKDOWN_BUILD_TESTS)
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                     --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties(native_timing PROPERTIES TIMEOUT 60)
+        add_test(NAME crowd_timing
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/crowd_timing_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(crowd_timing PROPERTIES TIMEOUT 60)
         add_test(NAME vehicle_lod
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vehicle_lod_test.py"
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"

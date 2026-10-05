@@ -1,7 +1,7 @@
-param([ValidateRange(1, 64)][int]$Jobs = 2, [switch]$StepDownVariant)
+param([ValidateRange(1, 64)][int]$Jobs = 2, [switch]$StepDownVariant, [switch]$CrowdVariant)
 $ErrorActionPreference = 'Stop'
 $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$variant = if ($StepDownVariant) { 'physics-step-down' } else { 'physics-trace' }
+$variant = if ($CrowdVariant) { 'physics-crowd' } elseif ($StepDownVariant) { 'physics-step-down' } else { 'physics-trace' }
 $destination = Join-Path $root "out/variants/$variant"
 $executable = Join-Path $destination 'crackdown-physics-trace.exe'
 if (Get-CimInstance Win32_Process -Filter "Name = 'crackdown-physics-trace.exe'" |

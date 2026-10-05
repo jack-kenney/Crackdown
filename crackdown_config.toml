@@ -357,3 +357,26 @@ setjmp_address = 0x82AC2330
 address = 0x826C3F40
 register = 10
 labels = [0x826C3F44, 0x826C3F50, 0x826C3F5C, 0x826C3F68, 0x826C3F74, 0x826C3F80, 0x826C3F8C, 0x826C3F98, 0x826C3FA8, 0x826C3F44, 0x826C3F44, 0x826C3F44, 0x826C3F44, 0x826C3F44, 0x826C3F44, 0x826C3F44]
+
+# Consume nominal crowd steps using native elapsed time. Original timing and
+# --normalize_crowd_timing=false leave every original register unchanged.
+[[entrypoint.midasm_hook]]
+address = 0x823311C8
+name = "CrackdownCrowdAdvance"
+registers = ["r31", "v0"]
+
+[[entrypoint.midasm_hook]]
+address = 0x823311D8
+name = "CrackdownCrowdCountdown"
+registers = ["r31", "r11"]
+
+[[entrypoint.midasm_hook]]
+address = 0x823308E0
+name = "CrackdownCrowdAnimation"
+registers = ["r31", "f0"]
+
+[[entrypoint.midasm_hook]]
+address = 0x823383AC
+name = "CrackdownCrowdSteering"
+registers = ["f20"]
+after_instruction = true

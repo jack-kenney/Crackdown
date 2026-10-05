@@ -3,13 +3,14 @@ param(
     [switch]$Automation,
     [switch]$Windowed,
     [switch]$NormalizeStepDown,
+    [switch]$NormalizeCrowd,
     [switch]$PrintArguments
 )
 $ErrorActionPreference = 'Stop'
 try {
     . (Join-Path $PSScriptRoot 'launcher-settings.ps1')
     $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-    $variant = if ($NormalizeStepDown) { 'physics-step-down' } else { 'physics-trace' }
+    $variant = if ($NormalizeCrowd) { 'physics-crowd' } elseif ($NormalizeStepDown) { 'physics-step-down' } else { 'physics-trace' }
     $executable = Join-Path $root "out/variants/$variant/crackdown-physics-trace.exe"
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
         throw 'Build the diagnostic executable with tools/build-physics-trace.ps1.'
@@ -31,7 +32,9 @@ try {
     $arguments += '--pace_gpu_wait=true'
     $arguments += '--vehicle_lod1_distance=15'
     $arguments += "--automation=$($Automation.IsPresent.ToString().ToLowerInvariant())"
-    $arguments += "--normalize_character_step_down=$($NormalizeStepDown.IsPresent.ToString().ToLowerInvariant())"
+    $stepDown = $NormalizeStepDown.IsPresent -or $NormalizeCrowd.IsPresent
+    $arguments += "--normalize_character_step_down=$($stepDown.ToString().ToLowerInvariant())"
+    $arguments += "--normalize_crowd_timing=$($NormalizeCrowd.IsPresent.ToString().ToLowerInvariant())"
     if ($PrintArguments) {
         [pscustomobject]@{ executable=$executable; arguments=$arguments; session=$session } | ConvertTo-Json
         exit 0

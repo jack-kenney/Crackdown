@@ -2,7 +2,8 @@
 
 Status: investigating, 2026-10-05. A step-down correction passed human testing
 and is enabled by default in native timing builds. Original timing is unchanged.
-NPC animation and distant vehicle speed reports remain unresolved.
+The distant pedestrian movement/animation correction also passed human testing.
+Distant vehicle speed and the occasional stair recurrence remain unresolved.
 
 Hands-on testing reports occasional accelerated airborne movement, sometimes
 after standing still, with no obvious vehicle impact or damage. Earlier reports
@@ -247,12 +248,55 @@ and the exact allowed output-memory change. Human gameplay comparison reported
 greatly improved steps and normal jumps/curbs. Continued testing is still needed
 for other terrain, impulses and movement modes.
 
+A later session included one possible recurrence on a staircase that was not
+retested. Keep that unresolved rather than treating the controller as fully
+corrected. The neighboring step-up routine `822B4100`, called from the same
+parent at return address `822AA820`, also references 0.4, but inspection shows
+it is a comparison threshold rather than the step-down correction multiplier.
+That constant alone does not justify the same scaling. Capture the repeated
+staircase with the existing controller-stage trace before changing this path.
+
 ## Distant NPC follow-up
 
 The user reports that distant NPC movement and animation still speed up, while
 nearby NPCs appear normal; distant cars may also be affected. A separate crowd
 subsystem uses dedicated low-detail models and fixed walk/run movement steps,
 plus a rounded `0.0333333` animation phase increment. Its live pool is distinct
-from the nearby character controller hooks above. No crowd correction has been
-applied yet. The [full fixed timing audit](fixed-timing-audit.md) inventories this
+from the nearby character controller hooks above. The [full fixed timing audit](fixed-timing-audit.md) inventories this
 path, other timer/response candidates, and the limits of read-only pool samples.
+
+## Native crowd correction test
+
+The crowd correction now scales consumed movement and animation by published
+elapsed simulation time, retains fractional reference progress through path
+countdowns, and normalizes steering's per-update response. It preserves the
+authored walk/run vectors and the original path, clip and rendering routines.
+The flag `normalize_crowd_timing` defaults to true only when native timing is
+active; `--normalize_crowd_timing=false` provides a comparison control.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-physics-trace.ps1 -CrowdVariant -Jobs 2
+.\Play-Crackdown-Crowd-Timing.cmd
+```
+
+This stages `out/variants/physics-crowd/crackdown-physics-trace.exe`, retains the
+optimized renderer and step-down correction, and uses the existing diagnostic
+save profile. Save and close another diagnostic instance first. The physical
+controller remains active. Baseline and step-down-only launchers explicitly
+disable the crowd correction so persisted settings cannot change the comparison.
+
+All 30 regression tests pass. The crowd fixture executes actual generated
+movement/animation code at 30/60/120/144/240 Hz, including LOD3/4/5 clip paths,
+variable deltas, segment ends, slot reuse and disabled-hook equivalence. Human testing confirms that pedestrian movement and animation look normal.
+Read-only live samples agree: movement and animation track published elapsed
+time at approximately 1.00x, versus approximately 2.22x before correction.
+Background cars still appear too fast until they begin rendering. The sampled
+pedestrian pool contains model IDs 0 through 5; its selected and unselected
+objects both show normalized motion. This does not establish that civilian
+vehicle driving shares that path. The separate `cTrafficDrivingAgent` constructor
+(`821ABF30`, vtable `8207EB48`) and its state dispatcher (`821AC810`, reached through `821AFF40` /
+`821AFE40`) are follow-up
+leads. Fixed 1/30 values also occur in `821A48A8` and `821AB8A0`; their neighboring
+comparisons suggest driving-distance thresholds, so they need semantic review
+before changing them. The independent Agency voice-line timer investigation remains
+unresolved; this change does not establish a connection to those cutoffs.
