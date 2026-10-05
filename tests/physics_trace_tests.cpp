@@ -113,7 +113,7 @@ int main(int argc, char** argv) {
     const std::array<Function, 17> hooks{sub_822B97B0, sub_822AB708, sub_822A9E78,
         sub_829BD048, STAGE_FUNCTIONS(sub_)};
 #undef STAGE_FUNCTIONS
-    for (unsigned kind = 0; kind < hooks.size(); ++kind) {
+    const auto exercise = [&](unsigned kind) {
         PPCContext incoming{};
         incoming.r3.u32 = kind == 3 ? 0x105000 : kind == 0 ? agent : agent + 1344;
         incoming.r4.u32 = world;
@@ -136,15 +136,32 @@ int main(int argc, char** argv) {
         Check(std::memcmp(&actual, &expected, sizeof(actual)) == 0, "complete returned PPC context preserved");
         if (base) for (unsigned i = 0; i < pages.size(); ++i)
             Check(std::memcmp(base + pages[i], expected_memory[i].data(), 0x10000) == 0, "observer adds no guest memory writes");
-    }
+    };
+    for (unsigned kind = 0; kind < hooks.size(); ++kind) exercise(kind);
     if (!disabled && path.find("missing-parent") == std::string::npos) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(350));
-        std::ifstream file(path);
-        const std::string csv{std::istreambuf_iterator<char>(file), {}};
-        for (const auto* kind : {"agent_update", "controller_proxy", "controller_local", "havok_step",
+        const std::array<const char*, 17> kinds{"agent_update", "controller_proxy", "controller_local", "havok_step",
                 "prepare_motion", "prepare_support", "prepare_contact", "step_up", "step_down",
                 "local_solve", "proxy_solve", "update_contact", "update_support", "update_surface",
-                "update_velocity", "update_vertical", "update_water"})
+                "update_velocity", "update_vertical", "update_water"};
+        std::string csv;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        // The producer deliberately drops records on lock contention. Retry
+        // missing paths while checking their ABI and memory on every attempt;
+        // a single burst cannot require a lossless nonblocking trace queue.
+        do {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            std::ifstream file(path);
+            csv.assign(std::istreambuf_iterator<char>(file), {});
+            bool complete = true;
+            for (unsigned kind = 0; kind < kinds.size(); ++kind) {
+                if (csv.find(kinds[kind]) == std::string::npos) {
+                    complete = false;
+                    exercise(kind);
+                }
+            }
+            if (complete) break;
+        } while (std::chrono::steady_clock::now() < deadline);
+        for (const auto* kind : kinds)
             Check(csv.find(kind) != std::string::npos, "background writer emitted each hooked path");
         Check(csv.find(",12345678,1,11,1000,") != std::string::npos, "writer retained caller/player/clock observations");
         Check(csv.find("107.25") != std::string::npos, "writer follows the phantom position chain");

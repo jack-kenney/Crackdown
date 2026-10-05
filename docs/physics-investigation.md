@@ -1,7 +1,8 @@
 # Intermittent movement bursts at high frame rates
 
-Status: investigating, 2026-10-05. Default physics behavior is unchanged;
-an opt-in step-down correction is prepared for gameplay comparison.
+Status: investigating, 2026-10-05. A step-down correction passed human testing
+and is enabled by default in native timing builds. Original timing is unchanged.
+NPC animation and distant vehicle speed reports remain unresolved.
 
 Hands-on testing reports occasional accelerated airborne movement, sometimes
 after standing still, with no obvious vehicle impact or damage. Earlier reports
@@ -67,13 +68,17 @@ followed by a downward correction entering the local solve. That solve produces
 extra horizontal displacement, which the velocity-update stage converts back
 to horizontal velocity for the next update. Requested movement stays near
 13 units/sec; repeated traversal later produced horizontal derived speed near
-180. The trace localizes the feedback sequence, although an experimental
-correction still needs gameplay validation.
+180. The trace localizes the feedback sequence. Human comparison subsequently
+reported greatly improved steps and normal jumps and curbs with the correction
+enabled. This validates the observed player traversal improvement, not every
+physics or animation path.
 
 Some captured NPC spikes were one-update downward ground corrections, with
 ordinary horizontal movement immediately afterward. These do not explain every
 reported zooming NPC. The tester also reports accelerated NPC animations, so
-NPC animation/update timing remains a separate open audit.
+NPC animation/update timing remains a separate open audit. The same test also
+reported occasional zooming distant cars, which this character-only correction
+does not address.
 
 Local evidence is under `out/performance/physics-capture-20261005-13216`,
 `physics-capture-expanded-20261005-13216`, and
@@ -205,11 +210,11 @@ returned PPC contexts and guest fixture memory against original dispatch for all
 Havok, player and crowded-area NPC calls with physical controller input. The
 expanded stage trace captured player bursts on descending steps.
 
-## Opt-in step-down correction
+## Native timing step-down correction
 
 `sub_822B4D40` returns a downward velocity calculated as
 `-height * 0.4 / dt`. Repeating a 40% positional correction per update changes
-its response when native timing raises the update rate. The opt-in
+its response when native timing raises the update rate. The
 `normalize_character_step_down` flag changes that fraction to
 `1 - pow(0.6, dt * 30)` for updates shorter than 1/30 second. This preserves the
 original correction at 30 Hz and gives the same elapsed-time response across
@@ -221,7 +226,10 @@ local-controller call site `0x822AA884`. Incoming timestep, collision queries,
 horizontal outputs and returned registers remain as the original produces them.
 Original timing, unrelated callers, unsuccessful corrections, invalid deltas
 and longer updates pass through. It does not change the NPC proxy controller or
-NPC animation timing. The flag defaults to false.
+NPC animation timing. The flag defaults to true for native timing builds;
+`--normalize_character_step_down=false` provides a comparison control. The
+baseline diagnostic launcher sets false explicitly and the correction launcher
+sets true explicitly, preventing persisted settings from changing the comparison.
 
 Build the separate comparison variant and launch after saving and closing the
 baseline diagnostic game; both diagnostic launchers use the same save profile:
@@ -235,4 +243,16 @@ Compare the same descending steps, curbs and slopes, then check jumping and
 ordinary movement. Both variants retain stage tracing. The correction tests
 verify frame-rate-independent response in the isolated model, varying deltas,
 all opt-in/caller/result guards, unchanged original input and returned contexts,
-and the exact allowed output-memory change. Human gameplay validation is pending.
+and the exact allowed output-memory change. Human gameplay comparison reported
+greatly improved steps and normal jumps/curbs. Continued testing is still needed
+for other terrain, impulses and movement modes.
+
+## Distant NPC follow-up
+
+The user reports that distant NPC movement and animation still speed up, while
+nearby NPCs appear normal; distant cars may also be affected. A separate crowd
+subsystem uses dedicated low-detail models and fixed walk/run movement steps,
+plus a rounded `0.0333333` animation phase increment. Its live pool is distinct
+from the nearby character controller hooks above. No crowd correction has been
+applied yet. The [full fixed timing audit](fixed-timing-audit.md) inventories this
+path, other timer/response candidates, and the limits of read-only pool samples.

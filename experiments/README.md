@@ -104,6 +104,10 @@ local test artifacts, not game assets.
 
 ## Static timestep audit
 
+The October 5 [full fixed timing audit](../docs/fixed-timing-audit.md) extends
+this initial investigation to all current generated functions and matching SDK
+sources, including rounded literals, fixed gains and per-call counters.
+
 The shared float at guest `0x820ED704` is 1/30 and at `0x820ED634` is 1/60.
 `0x8254C568` is a widely used game delta-time getter: depending on engine state it
 returns a scaled 1/30 when byte 13 in the engine object at

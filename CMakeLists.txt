@@ -95,6 +95,8 @@ if(CRACKDOWN_BUILD_TESTS)
     add_test(NAME gpu_wait_policy COMMAND crackdown_gpu_wait_tests)
     add_test(NAME benchmark_routes
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_test.py")
+    add_test(NAME fixed_timing_audit
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixed_timing_audit_test.py")
     add_test(NAME xui_packages
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/xzp_assets_test.py")
     add_executable(crackdown_enumeration_tests tests/enumeration_tests.cpp src/enumeration.cpp)

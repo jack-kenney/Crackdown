@@ -1,12 +1,12 @@
-// Narrow, opt-in correction for the audited TU0 local character controller.
+// Narrow elapsed-time correction for the audited TU0 local character controller.
 #include "generated/crackdown_pch.h"
 #include "character_step_down.h"
 #include "native_timing.h"
 #include <rex/cvar.h>
 #include <bit>
 
-REXCVAR_DEFINE_BOOL(normalize_character_step_down, false, "Experiments",
-    "Experimental elapsed-time character step-down correction; native timing only. Restart required.")
+REXCVAR_DEFINE_BOOL(normalize_character_step_down, true, "Experiments",
+    "Elapsed-time character step-down correction; native timing only. Restart required.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REX_EXTERN(__imp__sub_822B4D40);
