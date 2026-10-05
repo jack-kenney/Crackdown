@@ -1,5 +1,9 @@
 # Crackdown TU0 high frame rate investigation
 
+Intermittent airborne movement bursts at high FPS remain under investigation.
+See [physics observations and capture instructions](../docs/physics-investigation.md)
+for the current evidence and the read-only controller/clock sampler.
+
 Status, 2026-10-04: the [native timestep prototype](#native-timestep-prototype)
 now measures about 59.5 guest FPS with near-baseline walking speed. Jump physics
 and other timing-dependent systems still need validation. The normal build stays
