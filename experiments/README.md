@@ -541,3 +541,79 @@ event worker; CPU totals include that host thread.
 existing renderer-test launcher still defaults to TYPE0 batching alone.
 The `gpu` and `optimized-gpu` variants add optional, sampled GPU timestamps;
 see [build and profiling instructions](../sdk-patches/rexglue-0.10.0/README.md#gpu-measurements).
+
+### GPU costs at the fixed Agency view
+
+The timestamp variant was exercised on the RTX 5070 Ti with the same camera,
+240 FPS native target, 15 m vehicle threshold, lighting fix/FAST readback,
+bloom, shadows and 4x filtering. The output window stayed at 960x540; renderer
+captures independently confirmed internal dimensions of 2560x1440 and
+1280x720. Each observation lasted 20 seconds and sampled GPU timestamps every
+60 guest frames. The profiler's actual-helper fixture passes 2,458 checks,
+and the CSV completeness/aggregation suite passes 10 tests.
+
+| Settings and timing mode | Guest FPS | Mean guest GPU ms/frame | Complete GPU samples |
+|---|---:|---:|---:|
+| 1440p, extreme FXAA, whole submissions | 97.15 | 8.00 | 32 |
+| 1440p, extreme FXAA, detailed categories | 95.55 | 8.16 | 32 |
+| 720p, extreme FXAA, whole submissions | 98.00 | 3.94 | 32 |
+| 720p, extreme FXAA, detailed categories | 98.20 | 4.08 | 32 |
+| 1440p, FXAA disabled, whole submissions | 98.05 | 7.93 | 32 |
+| 1440p, extreme FXAA, whole submissions, return | 98.20 | 7.99 | 33 |
+
+The whole-only 1440p result is close to the uninstrumented optimized samples
+(96.95–97.30 FPS). Detailed timestamps may affect pipelining; the detailed
+1440p run also recorded 3.3% more guest draws than the whole-only run, so the
+difference cannot be assigned entirely to instrumentation. These are separate
+launches at the same fixed camera, with variable ambient world activity.
+
+| Inclusive GPU category | 1440p mean ms | 720p mean ms |
+|---|---:|---:|
+| Render-target updates/transfers | 2.849 | 0.677 |
+| Resolves, including readback GPU work | 1.648 | 1.003 |
+| Readback GPU work (overlaps resolves) | 0.876 | 0.746 |
+| Texture conversion/loading | 0.682 | 0.297 |
+| Shared-memory uploads | 0.546 | 0.537 |
+| Gamma | 0.025 | 0.008 |
+| Extreme FXAA | 0.054 | 0.016 |
+
+These overlapping categories must not be summed as a frame total. Scopes start
+at their first actual GPU work and omit leading setup/barriers. The total is
+the sum of completed guest command-list intervals; it excludes the presenter's
+separate command list, host processing/waits and physical presentation. All
+six sample windows contain complete frames without invalid results, skipped
+submissions, query-budget drops or truncated detail scopes.
+
+The GPU work roughly halves at 720p, while throughput increases by less than
+1%. The graphics command thread consumes approximately 0.95 CPU cores in both
+whole-only captures. Together with the instruction-pointer evidence, this
+points to CPU command processing as the main limit in this view. Lowering
+resolution alone is not an effective FPS improvement here. It does not rule
+out a GPU limit in other views or at higher frame rates.
+
+Turning FXAA off saves only about 0.06–0.07 ms of GPU time relative to the two
+1440p whole-only controls, consistent with the measured FXAA scope. The return
+run with extreme FXAA is slightly faster in aggregate FPS than the off run;
+there is no meaningful throughput gain from disabling it in this comparison.
+
+The renderer records roughly 4,100–4,300 guest draws, 41 resolves, 48 texture
+loads, 15–16 MB of uploads and three command submissions per sampled frame.
+Render-target transfers scale by about four times with four times as many
+pixels; uploads and much of the readback path scale less. Final FXAA/gamma
+are small in comparison. This favors further CPU state/constant/upload work
+for immediate throughput, with render-target transfer reduction as a GPU
+headroom investigation.
+
+Source inspection found that `direct_host_resolve` still goes through the
+existing render-target dump and subsequent resolve dispatch. It is not a
+ready-made fused resolve path. A real fast path would need to preserve guest
+tiling, endian conversion, MSAA selection, scaling and memory visibility, with
+a fallback for unsupported cases. GPU timing does not justify simply dropping
+lighting readbacks or changing rendering quality.
+
+Local sample directories are `out/performance/live-51052/whole1440-01`,
+`live-52416/detail1440-01`, `live-40296/whole720-01` and
+`live-50736/detail720-01`, `live-51384/whole1440-noaa-01` and
+`live-45560/whole1440-return`; corresponding `renderer-optimized-gpu-*` directories
+contain the full GPU CSV, launch arguments, logs and captured output. These
+fixed-view results do not establish performance in a busy city route.
