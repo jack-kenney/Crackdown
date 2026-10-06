@@ -4,6 +4,7 @@
 namespace crackdown {
 // Set by the native main clock; original-timing builds never enable it.
 void SetCrowdNativeTiming(bool enabled);
+bool NativeTimingActive();
 }
 
 // Register helpers are also exercised directly by deterministic fixtures.

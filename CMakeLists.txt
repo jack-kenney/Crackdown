@@ -35,6 +35,8 @@ set(CRACKDOWN_SOURCES
     src/startup_movies.cpp
     src/graphics_options.cpp
     src/crowd_timing.cpp
+    src/lift_fade_timing.cpp
+    src/garage_door_timing.cpp
     src/enumeration.cpp
 )
 
@@ -202,6 +204,16 @@ if(CRACKDOWN_BUILD_TESTS)
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
                     --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
         set_tests_properties(background_car_timing PROPERTIES TIMEOUT 60)
+        add_test(NAME lift_fade_timing
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lift_fade_timing_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(lift_fade_timing PROPERTIES TIMEOUT 60)
+        add_test(NAME garage_door_timing
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/garage_door_timing_test.py"
+                    --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
+                    --sdk "${CRACKDOWN_SDK_ROOT}" --cxx "${CMAKE_CXX_COMPILER}")
+        set_tests_properties(garage_door_timing PROPERTIES TIMEOUT 60)
         add_test(NAME vehicle_lod
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vehicle_lod_test.py"
                     --generated "${CMAKE_CURRENT_SOURCE_DIR}/generated"
