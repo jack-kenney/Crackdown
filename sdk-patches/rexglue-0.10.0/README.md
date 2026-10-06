@@ -27,6 +27,13 @@ and residency invalidation remain unconditional. This candidate has a cost
 when constants change and is excluded from `frontend`: the combined comparison
 did not establish additional FPS. It remains available for further scene tests.
 
+The `temporal` variant adds `temporal-rendering.patch` after the five `frontend`
+patches. It captures the game's tiled scene depth and supplies camera motion and
+an experimental history preview. `tools/build-renderer.ps1 -Variant temporal`
+also runs hardware and WARP shader checks before staging. See the [investigation
+and launcher guide](../../docs/temporal-rendering.md); this is renderer research
+with additional moving-object/HUD work required for TAA or DLSS.
+
 ## Why this path
 
 On October 4, 2026, two 20-second live samples at exactly the same player

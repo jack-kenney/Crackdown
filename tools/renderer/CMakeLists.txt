@@ -37,6 +37,10 @@ option(RENDERER_GPU_TIMING "Build the optional GPU timestamp profiler" OFF)
 if(RENDERER_GPU_TIMING)
     list(APPEND gpu_sources d3d12/gpu_timing.cpp)
 endif()
+option(RENDERER_TEMPORAL "Build the experimental depth and camera reprojection path" OFF)
+if(RENDERER_TEMPORAL)
+    list(APPEND gpu_sources d3d12/temporal.cpp)
+endif()
 list(TRANSFORM gpu_sources PREPEND "${REX_SOURCE}/src/graphics/")
 add_library(crackdown_renderer SHARED ${gpu_sources}
     "${COMMAND_PROCESSOR_SOURCE}" "${REX_SOURCE}/thirdparty/dxbc/DXBCChecksum.cpp")
@@ -51,6 +55,9 @@ target_compile_options(crackdown_renderer PRIVATE
 target_include_directories(crackdown_renderer PRIVATE "${REX_SOURCE}/include" "${REX_SOURCE}")
 target_link_libraries(crackdown_renderer PRIVATE
     rex::runtime rex::xxhash rex::renderdoc d3d12 dxgi dxguid)
+if(RENDERER_TEMPORAL)
+    target_link_libraries(crackdown_renderer PRIVATE d3dcompiler)
+endif()
 target_link_options(crackdown_renderer PRIVATE "LINKER:/debug,/opt:ref,/opt:icf,/map")
 include("${REX_SOURCE}/cmake/rex_pch.cmake")
 rex_target_pch(crackdown_renderer
@@ -67,3 +74,10 @@ set_target_properties(renderer_offsets PROPERTIES CXX_STANDARD 23 CXX_STANDARD_R
 target_compile_options(renderer_offsets PRIVATE -fno-access-control -Wno-invalid-offsetof)
 target_include_directories(renderer_offsets PRIVATE "${REX_SOURCE}/include")
 target_link_libraries(renderer_offsets PRIVATE rex::runtime rex::renderdoc)
+
+if(RENDERER_TEMPORAL)
+    add_executable(temporal_gpu_test ../../tests/temporal_gpu_test.cpp)
+    target_include_directories(temporal_gpu_test PRIVATE "${REX_SOURCE}/include")
+    target_compile_features(temporal_gpu_test PRIVATE cxx_std_23)
+    target_link_libraries(temporal_gpu_test PRIVATE d3d12 dxgi dxguid d3dcompiler)
+endif()

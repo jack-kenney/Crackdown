@@ -1,0 +1,911 @@
+diff --git a/include/rex/graphics/d3d12/command_processor.h b/include/rex/graphics/d3d12/command_processor.h
+index 96d362b..95446b9 100644
+--- a/include/rex/graphics/d3d12/command_processor.h
++++ b/include/rex/graphics/d3d12/command_processor.h
+@@ -31,6 +31,7 @@
+ #include <rex/graphics/d3d12/render_target_cache.h>
+ #include <rex/graphics/d3d12/shared_memory.h>
+ #include <rex/graphics/d3d12/texture_cache.h>
++#include <rex/graphics/d3d12/temporal.h>
+ #include <rex/graphics/pipeline/shader/dxbc.h>
+ #include <rex/graphics/pipeline/shader/dxbc_translator.h>
+ #include <rex/graphics/registers.h>
+@@ -50,6 +51,11 @@ class D3D12CommandProcessor : public CommandProcessor {
+                                  system::KernelState* kernel_state);
+   ~D3D12CommandProcessor();
+ 
++  TemporalRendering& GetTemporalRendering() {
++    if (!temporal_) temporal_ = std::make_unique<TemporalRendering>(*this);
++    return *temporal_;
++  }
++
+   void ClearCaches() override;
+   void InvalidateGpuMemory() override;
+ 
+@@ -760,6 +766,7 @@ class D3D12CommandProcessor : public CommandProcessor {
+ 
+   // Temporary storage for memexport stream constants used in the draw.
+   std::vector<draw_util::MemExportRange> memexport_ranges_;
++  std::unique_ptr<TemporalRendering> temporal_;
+ };
+ 
+ }  // namespace rex::graphics::d3d12
+diff --git a/include/rex/graphics/d3d12/render_target_cache.h b/include/rex/graphics/d3d12/render_target_cache.h
+index cd7693a..b357e81 100644
+--- a/include/rex/graphics/d3d12/render_target_cache.h
++++ b/include/rex/graphics/d3d12/render_target_cache.h
+@@ -25,6 +25,7 @@
+ #include <rex/assert.h>
+ #include <rex/graphics/d3d12/shared_memory.h>
+ #include <rex/graphics/d3d12/texture_cache.h>
++#include <rex/graphics/d3d12/temporal_math.h>
+ #include <rex/graphics/flags.h>
+ #include <rex/graphics/pipeline/render_target/cache.h>
+ #include <rex/graphics/util/draw.h>
+@@ -63,6 +64,13 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+     are_current_command_list_render_targets_valid_ = false;
+   }
+ 
++  void CaptureTemporalDepth();
++  void ClearCache() override {
++    temporal_candidate_=nullptr;
++    temporal_candidate_frame_=UINT64_MAX;
++    RenderTargetCache::ClearCache();
++  }
++
+   bool msaa_2x_supported() const { return msaa_2x_supported_; }
+ 
+   void WriteEdramRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
+@@ -259,6 +267,12 @@ class D3D12RenderTargetCache final : public RenderTargetCache {
+     uint32_t temporary_sort_index_ = 0;
+   };
+ 
++  D3D12RenderTarget* temporal_candidate_ = nullptr;
++  uint64_t temporal_candidate_frame_ = UINT64_MAX;
++  draw_util::Scissor temporal_scissor_{};
++  temporal::Matrix temporal_matrix_{};
++  bool temporal_reversed_ = true;
++
+   enum TransferCBVRegister : uint32_t {
+     kTransferCBVRegisterStencilMask,
+     kTransferCBVRegisterAddress,
+diff --git a/include/rex/graphics/d3d12/temporal.h b/include/rex/graphics/d3d12/temporal.h
+new file mode 100644
+index 0000000..b9fd73f
+--- /dev/null
++++ b/include/rex/graphics/d3d12/temporal.h
+@@ -0,0 +1,42 @@
++#pragma once
++#include <rex/graphics/d3d12/temporal_math.h>
++#include <rex/ui/d3d12/d3d12_provider.h>
++
++#include <vector>
++
++namespace rex::graphics::d3d12 {
++class D3D12CommandProcessor;
++class TemporalRendering {
++ public:
++  static bool Enabled();
++  explicit TemporalRendering(D3D12CommandProcessor& cp) : cp_(cp) {}
++  bool Capture(ID3D12Resource* depth, D3D12_CPU_DESCRIPTOR_HANDLE srv,
++               uint32_t x, uint32_t y, uint32_t width, uint32_t height,
++               bool reversed, const temporal::Matrix& matrix,
++               uint32_t output_height);
++  void Present(ID3D12Resource* output, uint32_t width, uint32_t height);
++
++ private:
++  using Resource = Microsoft::WRL::ComPtr<ID3D12Resource>;
++  bool Initialize();
++  bool Resize(uint32_t width, uint32_t height);
++  bool Upload(const temporal::Constants& constants,
++              D3D12_GPU_VIRTUAL_ADDRESS& address);
++  void Retire(Resource& resource);
++  D3D12CommandProcessor& cp_;
++  Microsoft::WRL::ComPtr<ID3D12RootSignature> root_;
++  Microsoft::WRL::ComPtr<ID3D12PipelineState> capture_pipelines_[3],
++      resolve_pipeline_;
++  Resource depth_, color_, history_[2], motion_;
++  struct Retired {
++    uint64_t submission;
++    Resource resource;
++  };
++  std::vector<Retired> retired_;
++  uint32_t width_ = 0, height_ = 0, history_index_ = 0;
++  uint64_t captured_frame_ = UINT64_MAX, previous_frame_ = UINT64_MAX;
++  bool attempted_ = false, reversed_ = true;
++  std::vector<uint8_t> rows_written_;
++  temporal::Matrix matrix_{}, previous_matrix_{};
++};
++}  // namespace rex::graphics::d3d12
+diff --git a/include/rex/graphics/d3d12/temporal_math.h b/include/rex/graphics/d3d12/temporal_math.h
+new file mode 100644
+index 0000000..3d705db
+--- /dev/null
++++ b/include/rex/graphics/d3d12/temporal_math.h
+@@ -0,0 +1,122 @@
++#pragma once
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <cstdint>
++
++namespace rex::graphics::d3d12::temporal {
++using Matrix = std::array<float, 16>;  // Row-major, column vectors.
++inline bool Invert(const Matrix& input, Matrix& output) {
++  double a[4][8]{};
++  for (int r = 0; r < 4; ++r) {
++    for (int c = 0; c < 4; ++c) {
++      if (!std::isfinite(input[r * 4 + c])) return false;
++      a[r][c] = input[r * 4 + c];
++    }
++    a[r][r + 4] = 1;
++  }
++  for (int c = 0; c < 4; ++c) {
++    int pivot = c;
++    for (int r = c + 1; r < 4; ++r)
++      if (std::abs(a[r][c]) > std::abs(a[pivot][c])) pivot = r;
++    if (std::abs(a[pivot][c]) < 1e-12) return false;
++    for (int k = 0; k < 8; ++k) std::swap(a[c][k], a[pivot][k]);
++    double divisor = a[c][c];
++    for (int k = 0; k < 8; ++k) a[c][k] /= divisor;
++    for (int r = 0; r < 4; ++r) {
++      if (r == c) continue;
++      double factor = a[r][c];
++      for (int k = 0; k < 8; ++k) a[r][k] -= factor * a[c][k];
++    }
++  }
++  Matrix result{};
++  for (int r = 0; r < 4; ++r)
++    for (int c = 0; c < 4; ++c) {
++      result[r * 4 + c] = float(a[r][c + 4]);
++      if (!std::isfinite(result[r * 4 + c])) return false;
++    }
++  output = result;
++  return true;
++}
++// Match the shader translator's NDC correction and the actual D3D viewport,
++// then express it relative to the captured rectangle (not the padded target).
++inline Matrix CropProjection(const Matrix& guest, const float scale[3],
++                             const float offset[3],
++                             const uint32_t viewport_offset[2],
++                             const uint32_t viewport_extent[2], float z_min,
++                             float z_max, const uint32_t crop_offset[2],
++                             const uint32_t crop_extent[2]) {
++  Matrix result = guest;
++  for (int r = 0; r < 3; ++r) {
++    float s = scale[r], o = offset[r];
++    if (r < 2) {
++      const float extent_ratio =
++          float(viewport_extent[r]) / float(crop_extent[r]);
++      const float origin = (float(viewport_offset[r]) - float(crop_offset[r])) /
++                           float(crop_extent[r]);
++      s *= extent_ratio;
++      o = o * extent_ratio +
++          (r == 0 ? 1.f : -1.f) * (2.f * origin + extent_ratio - 1.f);
++    } else {
++      s *= z_max - z_min;
++      o = o * (z_max - z_min) + z_min;
++    }
++    for (int c = 0; c < 4; ++c)
++      result[r * 4 + c] = guest[r * 4 + c] * s + guest[12 + c] * o;
++  }
++  return result;
++}
++inline bool ContinuousCamera(const Matrix& current, const Matrix& previous) {
++  Matrix a, b;
++  if (!Invert(current, a) || !Invert(previous, b)) return false;
++  // A point on the central ray avoids assumptions about the game's handedness.
++  const float aw = a[14] * 0.5f + a[15], bw = b[14] * 0.5f + b[15];
++  if (std::abs(aw) < 1e-9f || std::abs(bw) < 1e-9f) return false;
++  double distance_squared = 0;
++  for (int r = 0; r < 3; ++r) {
++    double delta = (a[r * 4 + 2] * 0.5 + a[r * 4 + 3]) / aw -
++                   (b[r * 4 + 2] * 0.5 + b[r * 4 + 3]) / bw;
++    distance_squared += delta * delta;
++  }
++  double dot = 0, aa = 0, bb = 0;
++  for (int i = 12; i < 15; ++i) {
++    dot += double(current[i]) * previous[i];
++    aa += double(current[i]) * current[i];
++    bb += double(previous[i]) * previous[i];
++  }
++  return std::isfinite(distance_squared) && distance_squared < 400 &&
++         aa > 1e-12 && bb > 1e-12 && dot / std::sqrt(aa * bb) > 0.7;
++}
++// A vertical EDRAM tile offsets clip Y by k*W. Recover the full-image row.
++// Reject a different camera/object transform instead of assembling unrelated
++// depth.
++inline int TileOffsetY(const Matrix& full, const Matrix& tile,
++                       uint32_t height) {
++  double ww = 0, yw = 0;
++  for (int c = 0; c < 4; ++c) {
++    ww += double(full[12 + c]) * full[12 + c];
++    yw += double(tile[4 + c] - full[4 + c]) * full[12 + c];
++  }
++  if (ww < 1e-12 || !std::isfinite(ww) || !std::isfinite(yw)) return -1;
++  double k = yw / ww;
++  for (int r = 0; r < 4; ++r)
++    for (int c = 0; c < 4; ++c) {
++      double expected = full[r * 4 + c] + (r == 1 ? k * full[12 + c] : 0);
++      if (!std::isfinite(tile[r * 4 + c]) ||
++          std::abs(tile[r * 4 + c] - expected) >
++              1e-4 * std::max(1.0, std::abs(expected)))
++        return -1;
++    }
++  double row = k * height * 0.5;
++  if (!std::isfinite(row) || row < -0.25 || row > height ||
++      std::abs(row - std::round(row)) > .25)
++    return -1;
++  return int(std::round(row));
++}
++struct alignas(16) Constants {
++  Matrix inverse_current{}, previous{};
++  uint32_t width{}, height{}, origin_x{}, origin_y{};
++  uint32_t mode{}, valid_history{}, reversed_depth{}, padding{};
++};
++static_assert(sizeof(Constants) == 160);
++}  // namespace rex::graphics::d3d12::temporal
+diff --git a/include/rex/graphics/d3d12/temporal_shaders.h b/include/rex/graphics/d3d12/temporal_shaders.h
+new file mode 100644
+index 0000000..d4660c6
+--- /dev/null
++++ b/include/rex/graphics/d3d12/temporal_shaders.h
+@@ -0,0 +1,93 @@
++#pragma once
++namespace rex::graphics::d3d12::temporal {
++inline constexpr const char* kDepthShader = R"hlsl(
++cbuffer Constants : register(b0) {
++ row_major float4x4 inverseCurrent; row_major float4x4 previous;
++ uint2 size; uint2 origin; uint mode; uint validHistory; uint reversedDepth; uint unused;
++};
++#if SAMPLES == 1
++Texture2D<float> source : register(t0);
++#else
++Texture2DMS<float, SAMPLES> source : register(t0);
++#endif
++RWTexture2D<float> destination : register(u0);
++[numthreads(8,8,1)] void main(uint3 tid : SV_DispatchThreadID) {
++ if (any(tid.xy >= size)) return;
++ uint2 sourcePixel = tid.xy + origin;
++ float depth = reversedDepth ? 0 : 1;
++ for (uint s=0; s<SAMPLES; ++s) {
++#if SAMPLES == 1
++  float value = source.Load(int3(sourcePixel,0));
++#else
++  float value = source.Load(sourcePixel,s);
++#endif
++  if (!isfinite(value) || value < 0 || value > 1) continue;
++  depth = reversedDepth ? max(depth,value) : min(depth,value);
++ }
++ destination[tid.xy + uint2(0,unused)] = depth;
++}
++)hlsl";
++inline constexpr const char* kResolveShader = R"hlsl(
++cbuffer Constants : register(b0) {
++ row_major float4x4 inverseCurrent; row_major float4x4 previous;
++ uint2 size; uint2 origin; uint mode; uint validHistory; uint reversedDepth; uint unused;
++};
++Texture2D<float> depth : register(t0);
++Texture2D<float4> color : register(t1);
++Texture2D<float4> history : register(t2);
++RWTexture2D<float4> output : register(u0);
++RWTexture2D<float4> nextHistory : register(u1);
++RWTexture2D<float2> motion : register(u2);
++SamplerState linearClamp : register(s0);
++[numthreads(8,8,1)] void main(uint3 tid : SV_DispatchThreadID) {
++ if (any(tid.xy >= size)) return;
++ int2 pixel = tid.xy;
++ float2 uv = (float2(pixel)+0.5)/float2(size);
++ float d = depth.Load(int3(pixel,0));
++ float4 current = color.Load(int3(pixel,0));
++ float2 previousUV = uv;
++ float expectedDepth = d;
++ bool valid = validHistory != 0 && isfinite(d) && d >= 0 && d <= 1;
++ valid = valid && (reversedDepth ? d > 1e-7 : d < 1-1e-7);
++ if (valid) {
++  float4 clip = float4(uv.x*2-1,1-uv.y*2,d,1);
++  float4 world = mul(inverseCurrent,clip);
++  float4 oldClip = mul(previous,world);
++  valid = all(isfinite(oldClip)) && oldClip.w > 1e-6;
++  if (valid) {
++   float3 ndc = oldClip.xyz / oldClip.w;
++   previousUV = float2(ndc.x*0.5+0.5,0.5-ndc.y*0.5);
++   expectedDepth = ndc.z;
++   valid = all(previousUV >= 0) && all(previousUV <= 1) && expectedDepth >= 0 && expectedDepth <= 1;
++  }
++ }
++ float2 velocity = valid ? (previousUV-uv)*float2(size) : 0;
++ // Prevent half-float overflow or corrupt vectors from crossing a camera cut.
++ if (!all(isfinite(velocity)) || any(abs(velocity)>float2(size))) {valid=false; velocity=0;}
++ motion[pixel] = velocity;
++ float3 result = current.rgb;
++ if (mode == 3 && valid) {
++  // Camera-only research resolve. Dynamic objects and HUD still require their
++  // own vectors/masks before this is suitable for a production TAA/DLSS path.
++  float4 old = history.SampleLevel(linearClamp,previousUV,0);
++  float3 lo = current.rgb, hi = current.rgb;
++  for (int y=-1; y<=1; ++y) for (int x=-1; x<=1; ++x) {
++   float3 neighbor = color.Load(int3(clamp(pixel+int2(x,y),int2(0,0),int2(size)-1),0)).rgb;
++   lo=min(lo,neighbor); hi=max(hi,neighbor);
++  }
++  float error = max(max(abs(old.r-current.r),abs(old.g-current.g)),abs(old.b-current.b));
++  bool sameSurface = isfinite(old.a) && abs(old.a-expectedDepth) <= max(2e-6,abs(expectedDepth)*0.025);
++  float weight = sameSurface ? 0.8*saturate(1-error*8) : 0;
++  if (sameSurface && all(isfinite(old))) result = lerp(current.rgb,clamp(old.rgb,lo,hi),weight);
++ }
++ nextHistory[pixel] = float4(result,d);
++ if (mode == 1) {
++  float view = reversedDepth ? d/(d+0.0025) : (1-d)/(1-d+0.0025);
++  result = view.xxx;
++ } else if (mode == 2) {
++  result = valid ? float3(0.5+velocity.x/32,0.5+velocity.y/32,0.5) : float3(0,0,0);
++ }
++ output[pixel] = float4(result,current.a);
++}
++)hlsl";
++}  // namespace rex::graphics::d3d12::temporal
+diff --git a/src/graphics/d3d12/command_processor.cpp b/src/graphics/d3d12/command_processor.cpp
+index ee0ff9b..b12a5ff 100644
+--- a/src/graphics/d3d12/command_processor.cpp
++++ b/src/graphics/d3d12/command_processor.cpp
+@@ -1734,6 +1734,7 @@ void D3D12CommandProcessor::ShutdownContext() {
+   }
+   constant_buffer_pool_.reset();
+ 
++  temporal_.reset();
+   render_target_cache_.reset();
+ 
+   shared_memory_.reset();
+@@ -2259,6 +2260,12 @@ void D3D12CommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbu
+                                 apply_gamma_dest_initial_state);
+         }
+ 
++        if (TemporalRendering::Enabled()) {
++          render_target_cache_->CaptureTemporalDepth();
++          GetTemporalRendering().Present(
++              guest_output_resource, guest_output_width, guest_output_height);
++        }
++
+         // Need to submit all the commands before giving the image back to the
+         // presenter so it can submit its own commands for displaying it to the
+         // queue.
+diff --git a/src/graphics/d3d12/render_target_cache.cpp b/src/graphics/d3d12/render_target_cache.cpp
+index dd321a5..e59099e 100644
+--- a/src/graphics/d3d12/render_target_cache.cpp
++++ b/src/graphics/d3d12/render_target_cache.cpp
+@@ -11,6 +11,9 @@
+ 
+ #include "thirdparty/dxbc/DXBCChecksum.h"
+ 
++#include <fstream>
++#include <iomanip>
++#include <unordered_map>
+ #include <algorithm>
+ #include <array>
+ #include <cstdint>
+@@ -49,6 +52,54 @@ REXCVAR_DEFINE_BOOL(native_stencil_value_output, true, "GPU", "Enable native ste
+ 
+ namespace rex::graphics::d3d12 {
+ 
++REXCVAR_DEFINE_STRING(temporal_trace_path, "", "GPU",
++    "Experimental scene-depth/vertex-constant trace path. Empty disables tracing.")
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++namespace {
++struct TemporalTrace {
++  std::ofstream file;
++  bool attempted = false;
++  uint64_t frame = UINT64_MAX;
++  std::unordered_map<uint64_t, uint32_t> counts;
++};
++thread_local TemporalTrace temporal_trace;
++void TraceDepth(uint64_t frame, uint32_t key, uint32_t width, uint32_t height,
++                uint32_t samples, reg::RB_DEPTHCONTROL depth_control,
++                const RegisterFile& registers, const Shader& shader) {
++  const auto path = REXCVAR_GET(temporal_trace_path);
++  if (path.empty()) return;
++  auto& trace = temporal_trace;
++  if (!trace.attempted) {
++    trace.attempted = true;
++    trace.file.open(path, std::ios::out);
++    if (trace.file) trace.file << "frame,key,width,height,samples,z_enable,z_write,scissor_x,scissor_y,scissor_w,scissor_h,shader,float_mask,viewport_w,viewport_h,window_y,ndc_y,constants\n";
++  }
++  if (!trace.file || frame % 120) return;
++  if (trace.frame != frame) { trace.frame = frame; trace.counts.clear(); }
++  draw_util::Scissor scissor;
++  draw_util::GetScissor(registers, scissor);
++  if (++trace.counts[uint64_t(key) ^ shader.ucode_data_hash() ^ (uint64_t(scissor.extent[1])<<32)] != 1) return;
++  draw_util::ViewportInfo viewport;
++  draw_util::GetHostViewportInfo(registers,1,1,true,D3D12_VIEWPORT_BOUNDS_MAX,D3D12_VIEWPORT_BOUNDS_MAX,
++      false,depth_control,false,true,false,viewport);
++  trace.file << frame << ',' << key << ',' << width << ',' << height << ',' << samples
++             << ',' << depth_control.z_enable << ',' << depth_control.z_write_enable
++             << ',' << scissor.offset[0] << ',' << scissor.offset[1]
++             << ',' << scissor.extent[0] << ',' << scissor.extent[1]
++             << ',' << shader.ucode_data_hash() << ',' << shader.constant_register_map().float_bitmap[0] << ',' << viewport.xy_extent[0] << ',' << viewport.xy_extent[1] << ',' << registers.Get<reg::PA_SC_WINDOW_OFFSET>().window_y_offset << ',' << viewport.ndc_offset[1] << ",\"";
++  for (uint32_t i = 0; i < 1024; ++i) {
++    float value;
++    uint32_t bits = registers[XE_GPU_REG_SHADER_CONSTANT_000_X + i];
++    std::memcpy(&value, &bits, sizeof(value));
++    if (i) trace.file << ' ';
++    trace.file << std::setprecision(9) << value;
++  }
++  trace.file << "\"\n";
++  trace.file.flush();
++}
++}  // namespace
++
++
+ // Generated with `xb buildshaders`.
+ namespace shaders {
+ #include "../shaders/bytecode/d3d12_5_1/clear_uint2_ps.h"
+@@ -1070,6 +1121,82 @@ bool D3D12RenderTargetCache::Update(bool is_rasterization_done,
+       PerformTransfersAndResolveClears(1 + xenos::kMaxColorRenderTargets,
+                                        depth_and_color_render_targets, last_update_transfers());
+       SetCommandListRenderTargets(depth_and_color_render_targets);
++      if (TemporalRendering::Enabled() && is_rasterization_done &&
++          depth_and_color_render_targets[0] &&
++          normalized_depth_control.z_enable &&
++          normalized_depth_control.z_write_enable &&
++          static_cast<D3D12RenderTarget*>(depth_and_color_render_targets[0])
++                  ->resource()
++                  ->GetDesc()
++                  .SampleDesc.Count > 1 &&
++          (vertex_shader.constant_register_map().float_bitmap[0] & 15) == 15) {
++        draw_util::Scissor crop;
++        draw_util::GetScissor(register_file(), crop);
++        auto* target =
++            static_cast<D3D12RenderTarget*>(depth_and_color_render_targets[0]);
++        draw_util::ViewportInfo viewport;
++        draw_util::GetHostViewportInfo(
++            register_file(), draw_resolution_scale_x(),
++            draw_resolution_scale_y(), true, D3D12_VIEWPORT_BOUNDS_MAX,
++            D3D12_VIEWPORT_BOUNDS_MAX, false, normalized_depth_control,
++            depth_float24_convert_in_pixel_shader_, true, false, viewport);
++        crop.offset[0] *= draw_resolution_scale_x();
++        crop.offset[1] *= draw_resolution_scale_y();
++        crop.extent[0] *= draw_resolution_scale_x();
++        crop.extent[1] *= draw_resolution_scale_y();
++        // Scene scissors can extend into padding. Intersect with the viewport.
++        for (int axis = 0; axis < 2; ++axis) {
++          auto end = std::min(
++              uint64_t(crop.offset[axis]) + crop.extent[axis],
++              uint64_t(viewport.xy_offset[axis]) + viewport.xy_extent[axis]);
++          crop.offset[axis] =
++              std::max(crop.offset[axis], viewport.xy_offset[axis]);
++          crop.extent[axis] =
++              end > crop.offset[axis] ? uint32_t(end - crop.offset[axis]) : 0;
++        }
++        if (crop.extent[0] == 1280 * draw_resolution_scale_x() &&
++            crop.extent[1] > 0 &&
++            crop.extent[1] <= 720 * draw_resolution_scale_y() &&
++            (temporal_candidate_frame_ !=
++                 command_processor_.GetCurrentFrame() ||
++             !temporal_candidate_)) {
++          temporal::Matrix guest;
++          std::memcpy(guest.data(),
++                      &register_file().values[XE_GPU_REG_SHADER_CONSTANT_000_X],
++                      sizeof(guest));
++          float perspective = guest[12] * guest[12] + guest[13] * guest[13] +
++                              guest[14] * guest[14];
++          if (perspective > 0.9f && perspective < 1.1f) {
++            auto matrix = temporal::CropProjection(
++                guest, viewport.ndc_scale, viewport.ndc_offset,
++                viewport.xy_offset, viewport.xy_extent, viewport.z_min,
++                viewport.z_max, crop.offset,
++                std::array<uint32_t, 2>{1280 * draw_resolution_scale_x(),
++                                        720 * draw_resolution_scale_y()}
++                    .data());
++            temporal::Matrix inverse;
++            if (temporal::Invert(matrix, inverse)) {
++              temporal_candidate_ = target;
++              temporal_candidate_frame_ = command_processor_.GetCurrentFrame();
++              temporal_scissor_ = crop;
++              temporal_matrix_ = matrix;
++              temporal_reversed_ = normalized_depth_control.zfunc ==
++                                       xenos::CompareFunction::kGreater ||
++                                   normalized_depth_control.zfunc ==
++                                       xenos::CompareFunction::kGreaterEqual;
++            }
++          }
++        }
++      }
++      if (depth_and_color_render_targets[0] &&
++          !REXCVAR_GET(temporal_trace_path).empty()) {
++        auto* depth =
++            static_cast<D3D12RenderTarget*>(depth_and_color_render_targets[0]);
++        auto desc = depth->resource()->GetDesc();
++        TraceDepth(command_processor_.GetCurrentFrame(), depth->key().key,
++                   uint32_t(desc.Width), desc.Height, desc.SampleDesc.Count,
++                   normalized_depth_control, register_file(), vertex_shader);
++      }
+     } break;
+     case Path::kPixelShaderInterlock: {
+       // For ROV, only the barrier is needed - already scheduled if required.
+@@ -1089,7 +1216,29 @@ bool D3D12RenderTargetCache::Update(bool is_rasterization_done,
+   return true;
+ }
+ 
+-void D3D12RenderTargetCache::WriteEdramRawSRVDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle) {
++void D3D12RenderTargetCache::CaptureTemporalDepth() {
++  if (!temporal_candidate_ ||
++      temporal_candidate_frame_ != command_processor_.GetCurrentFrame())
++    return;
++  auto* target = temporal_candidate_;
++  auto state =
++      target->SetResourceState(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++  command_processor_.PushTransitionBarrier(
++      target->resource(), state,
++      D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++  command_processor_.GetTemporalRendering().Capture(
++      target->resource(), target->descriptor_srv().GetHandle(),
++      temporal_scissor_.offset[0], temporal_scissor_.offset[1],
++      temporal_scissor_.extent[0], temporal_scissor_.extent[1],
++      temporal_reversed_, temporal_matrix_, 720 * draw_resolution_scale_y());
++  target->SetResourceState(state);
++  command_processor_.PushTransitionBarrier(
++      target->resource(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++      state);
++}
++
++void D3D12RenderTargetCache::WriteEdramRawSRVDescriptor(
++    D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+   const ui::d3d12::D3D12Provider& provider = command_processor_.GetD3D12Provider();
+   ID3D12Device* device = provider.GetDevice();
+   device->CopyDescriptorsSimple(
+@@ -1175,6 +1324,14 @@ bool D3D12RenderTargetCache::Resolve(const memory::Memory& memory, D3D12SharedMe
+     return false;
+   }
+ 
++  if (!REXCVAR_GET(temporal_trace_path).empty() && command_processor_.GetCurrentFrame()%120==0) {
++    auto& f=temporal_trace.file;
++    if (f) f << "#resolve," << command_processor_.GetCurrentFrame() << ',' << resolve_info.depth_original_base
++      << ',' << resolve_info.coordinate_info.edram_offset_y_div_8*8 << ',' << resolve_info.height_div_8*8
++      << ',' << resolve_info.copy_dest_base << ',' << resolve_info.copy_dest_coordinate_info.offset_y_div_8*8
++      << ',' << resolve_info.IsClearingDepth() << ',' << resolve_info.IsCopyingDepth() << '\n';
++  }
++
+   // Nothing to copy/clear.
+   if (!resolve_info.coordinate_info.width_div_8 || !resolve_info.height_div_8) {
+     return true;
+@@ -1340,6 +1497,11 @@ bool D3D12RenderTargetCache::Resolve(const memory::Memory& memory, D3D12SharedMe
+         if (PrepareHostRenderTargetsResolveClear(resolve_info, clear_rectangle,
+                                                  clear_render_targets[0], clear_transfers_[0],
+                                                  clear_render_targets[1], clear_transfers_[1])) {
++          if (TemporalRendering::Enabled() && clear_depth &&
++              clear_render_targets[0] == temporal_candidate_) {
++            CaptureTemporalDepth();
++            temporal_candidate_ = nullptr;
++          }
+           uint64_t clear_values[2];
+           clear_values[0] = resolve_info.rb_depth_clear;
+           clear_values[1] =
+diff --git a/src/graphics/d3d12/temporal.cpp b/src/graphics/d3d12/temporal.cpp
+new file mode 100644
+index 0000000..0ec0f93
+--- /dev/null
++++ b/src/graphics/d3d12/temporal.cpp
+@@ -0,0 +1,324 @@
++#include <d3dcompiler.h>
++#include <rex/cvar.h>
++#include <rex/graphics/d3d12/command_processor.h>
++#include <rex/graphics/d3d12/temporal.h>
++#include <rex/graphics/d3d12/temporal_shaders.h>
++#include <rex/logging.h>
++#include <rex/ui/d3d12/d3d12_presenter.h>
++
++#include <cstring>
++
++REXCVAR_DEFINE_INT32(temporal_mode, 0, "GPU/Experimental",
++                     "Temporal research: 0 off, 1 depth, 2 camera motion, 3 "
++                     "camera-only history resolve, 4 capture-only control")
++    .range(0, 4)
++    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++
++namespace rex::graphics::d3d12 {
++bool TemporalRendering::Enabled() { return REXCVAR_GET(temporal_mode) != 0; }
++bool TemporalRendering::Initialize() {
++  if (attempted_) return resolve_pipeline_ != nullptr;
++  attempted_ = true;
++  auto* device = cp_.GetD3D12Provider().GetDevice();
++  // RequestOneUseSingleViewDescriptors is explicitly NON-CONTIGUOUS on the
++  // bindless path. Each resource needs its own one-descriptor table.
++  D3D12_DESCRIPTOR_RANGE ranges[6]{};
++  D3D12_ROOT_PARAMETER params[7]{};
++  params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
++  params[0].Descriptor = {0, 0};
++  for (int i = 0; i < 6; ++i) {
++    ranges[i] = {i < 3 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV
++                       : D3D12_DESCRIPTOR_RANGE_TYPE_UAV,
++                 1, UINT(i % 3), 0, 0};
++    params[i + 1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
++    params[i + 1].DescriptorTable = {1, &ranges[i]};
++  }
++  D3D12_STATIC_SAMPLER_DESC sampler{};
++  sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
++  sampler.AddressU = sampler.AddressV = sampler.AddressW =
++      D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
++  sampler.MaxLOD = D3D12_FLOAT32_MAX;
++  sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
++  D3D12_ROOT_SIGNATURE_DESC desc{7, params, 1, &sampler,
++                                 D3D12_ROOT_SIGNATURE_FLAG_NONE};
++  Microsoft::WRL::ComPtr<ID3DBlob> blob, errors;
++  if (FAILED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1,
++                                         &blob, &errors)) ||
++      FAILED(device->CreateRootSignature(0, blob->GetBufferPointer(),
++                                         blob->GetBufferSize(),
++                                         IID_PPV_ARGS(&root_)))) {
++    REXGPU_ERROR(
++        "Temporal: root signature creation failed; leaving presentation "
++        "unchanged");
++    return false;
++  }
++  auto compile = [&](const char* code, const D3D_SHADER_MACRO* macros,
++                     Microsoft::WRL::ComPtr<ID3D12PipelineState>& pipeline) {
++    blob.Reset();
++    errors.Reset();
++    HRESULT hr = D3DCompile(
++        code, std::strlen(code), "crackdown-temporal", macros, nullptr, "main",
++        "cs_5_1", D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_ENABLE_STRICTNESS,
++        0, &blob, &errors);
++    if (FAILED(hr)) {
++      REXGPU_ERROR("Temporal shader compilation failed: {}",
++                   errors ? static_cast<const char*>(errors->GetBufferPointer())
++                          : "unknown error");
++      return false;
++    }
++    D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
++    pso.pRootSignature = root_.Get();
++    pso.CS = {blob->GetBufferPointer(), blob->GetBufferSize()};
++    return SUCCEEDED(
++        device->CreateComputePipelineState(&pso, IID_PPV_ARGS(&pipeline)));
++  };
++  const char* sample_counts[] = {"1", "2", "4"};
++  for (int i = 0; i < 3; ++i) {
++    D3D_SHADER_MACRO macros[] = {{"SAMPLES", sample_counts[i]},
++                                 {nullptr, nullptr}};
++    if (!compile(temporal::kDepthShader, macros, capture_pipelines_[i]))
++      return false;
++  }
++  if (!compile(temporal::kResolveShader, nullptr, resolve_pipeline_))
++    return false;
++  REXGPU_INFO("Temporal research initialized: mode {} (camera-only vectors)",
++              REXCVAR_GET(temporal_mode));
++  return true;
++}
++void TemporalRendering::Retire(Resource& resource) {
++  if (resource)
++    retired_.push_back({cp_.GetCurrentSubmission(), std::move(resource)});
++}
++bool TemporalRendering::Resize(uint32_t width, uint32_t height) {
++  std::erase_if(retired_, [&](const Retired& r) {
++    return r.submission <= cp_.GetCompletedSubmission();
++  });
++  if (width_ == width && height_ == height && depth_) return true;
++  if (!width || !height || width > 8192 || height > 8192) return false;
++  Resource depth, color, history[2], motion;
++  auto* device = cp_.GetD3D12Provider().GetDevice();
++  D3D12_HEAP_PROPERTIES heap{};
++  heap.Type = D3D12_HEAP_TYPE_DEFAULT;
++  auto create = [&](DXGI_FORMAT format, D3D12_RESOURCE_STATES state,
++                    Resource& resource) {
++    D3D12_RESOURCE_DESC desc{};
++    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
++    desc.Width = width;
++    desc.Height = height;
++    desc.DepthOrArraySize = 1;
++    desc.MipLevels = 1;
++    desc.Format = format;
++    desc.SampleDesc.Count = 1;
++    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
++    return SUCCEEDED(device->CreateCommittedResource(
++        &heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr,
++        IID_PPV_ARGS(&resource)));
++  };
++  if (!create(DXGI_FORMAT_R32_FLOAT,
++              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, depth) ||
++      !create(ui::d3d12::D3D12Presenter::kGuestOutputFormat,
++              D3D12_RESOURCE_STATE_COPY_DEST, color) ||
++      !create(DXGI_FORMAT_R16G16B16A16_FLOAT,
++              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, history[0]) ||
++      !create(DXGI_FORMAT_R16G16B16A16_FLOAT,
++              D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, history[1]) ||
++      !create(DXGI_FORMAT_R16G16_FLOAT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++              motion))
++    return false;
++  Retire(depth_);
++  Retire(color_);
++  Retire(history_[0]);
++  Retire(history_[1]);
++  Retire(motion_);
++  depth_ = std::move(depth);
++  color_ = std::move(color);
++  history_[0] = std::move(history[0]);
++  history_[1] = std::move(history[1]);
++  motion_ = std::move(motion);
++  width_ = width;
++  height_ = height;
++  history_index_ = 0;
++  previous_frame_ = captured_frame_ = UINT64_MAX;
++  REXGPU_INFO("Temporal viewport: {}x{}; history reset", width, height);
++  return true;
++}
++bool TemporalRendering::Upload(const temporal::Constants& constants,
++                               D3D12_GPU_VIRTUAL_ADDRESS& address) {
++  // This pool is reclaimed by completed FRAME, unlike resource retirement.
++  // A submission index here would pin the shared draw-upload pages
++  // indefinitely.
++  auto* mapping = cp_.GetConstantBufferPool().Request(
++      cp_.GetCurrentFrame(), sizeof(constants), 256, nullptr, nullptr,
++      &address);
++  if (!mapping) {
++    REXGPU_ERROR(
++        "Temporal constant upload failed; device status 0x{:08X}",
++        uint32_t(cp_.GetD3D12Provider().GetDevice()->GetDeviceRemovedReason()));
++    return false;
++  }
++  std::memcpy(mapping, &constants, sizeof(constants));
++  return true;
++}
++bool TemporalRendering::Capture(ID3D12Resource* depth,
++                                D3D12_CPU_DESCRIPTOR_HANDLE srv, uint32_t x,
++                                uint32_t y, uint32_t width, uint32_t height,
++                                bool reversed, const temporal::Matrix& matrix,
++                                uint32_t output_height) {
++  auto desc = depth->GetDesc();
++  if (x + uint64_t(width) > desc.Width || y + uint64_t(height) > desc.Height)
++    return false;
++  unsigned samples = desc.SampleDesc.Count;
++  if (samples != 1 && samples != 2 && samples != 4) return false;
++  if (!Initialize() || !Resize(width, output_height)) return false;
++  const bool first_tile = captured_frame_ != cp_.GetCurrentFrame();
++  if (first_tile) {
++    rows_written_.assign(output_height, 0);
++    matrix_ = matrix;
++  }
++  auto destination_y = temporal::TileOffsetY(matrix_, matrix, output_height);
++  if (destination_y < 0 || uint64_t(destination_y) + height > output_height)
++    return false;
++  temporal::Constants constants{};
++  constants.width = width;
++  constants.height = height;
++  constants.padding = uint32_t(destination_y);
++  constants.origin_x = x;
++  constants.origin_y = y;
++  constants.reversed_depth = reversed;
++  D3D12_GPU_VIRTUAL_ADDRESS address;
++  ui::d3d12::util::DescriptorCpuGpuHandlePair handles[2];
++  if (!Upload(constants, address) ||
++      !cp_.RequestOneUseSingleViewDescriptors(2, handles))
++    return false;
++  auto* device = cp_.GetD3D12Provider().GetDevice();
++  device->CopyDescriptorsSimple(1, handles[0].first, srv,
++                                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
++  D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
++  uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++  uav.Format = DXGI_FORMAT_R32_FLOAT;
++  device->CreateUnorderedAccessView(depth_.Get(), nullptr, &uav,
++                                    handles[1].first);
++  cp_.PushTransitionBarrier(depth_.Get(),
++                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++  auto& list = cp_.GetDeferredCommandList();
++  list.D3DSetComputeRootSignature(root_.Get());
++  list.D3DSetComputeRootConstantBufferView(0, address);
++  list.D3DSetComputeRootDescriptorTable(1, handles[0].second);
++  list.D3DSetComputeRootDescriptorTable(4, handles[1].second);
++  cp_.SetExternalPipeline(capture_pipelines_[samples == 1   ? 0
++                                             : samples == 2 ? 1
++                                                            : 2]
++                              .Get());
++  cp_.SubmitBarriers();
++  list.D3DDispatch((width + 7) / 8, (height + 7) / 8, 1);
++  cp_.PushTransitionBarrier(depth_.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++  std::fill(rows_written_.begin() + destination_y,
++            rows_written_.begin() + destination_y + height, 1);
++  reversed_ = reversed;
++  captured_frame_ = cp_.GetCurrentFrame();
++  return true;
++}
++void TemporalRendering::Present(ID3D12Resource* output, uint32_t width,
++                                uint32_t height) {
++  if (REXCVAR_GET(temporal_mode) == 4) {
++    previous_frame_ = UINT64_MAX;
++    return;
++  }
++  auto frame = cp_.GetCurrentFrame();
++  auto reason = cp_.GetD3D12Provider().GetDevice()->GetDeviceRemovedReason();
++  if (FAILED(reason)) {
++    static bool reported = false;
++    if (!reported) {
++      reported = true;
++      REXGPU_ERROR("Temporal device failure: 0x{:08X}", uint32_t(reason));
++    }
++    previous_frame_ = UINT64_MAX;
++    return;
++  }
++  if (captured_frame_ != frame || width != width_ || height != height_ ||
++      !resolve_pipeline_ || rows_written_.size() != height ||
++      std::find(rows_written_.begin(), rows_written_.end(), 0) !=
++          rows_written_.end()) {
++    previous_frame_ = UINT64_MAX;
++    return;
++  }
++  temporal::Constants constants{};
++  if (!temporal::Invert(matrix_, constants.inverse_current)) {
++    previous_frame_ = UINT64_MAX;
++    return;
++  }
++  constants.previous = previous_matrix_;
++  constants.width = width;
++  constants.height = height;
++  constants.mode = REXCVAR_GET(temporal_mode);
++  constants.reversed_depth = reversed_;
++  constants.valid_history =
++      (previous_frame_ != UINT64_MAX && previous_frame_ + 1 == frame &&
++       temporal::ContinuousCamera(matrix_, previous_matrix_));
++  D3D12_GPU_VIRTUAL_ADDRESS address;
++  ui::d3d12::util::DescriptorCpuGpuHandlePair handles[6];
++  if (!Upload(constants, address) ||
++      !cp_.RequestOneUseSingleViewDescriptors(6, handles)) {
++    previous_frame_ = UINT64_MAX;
++    return;
++  }
++  auto* device = cp_.GetD3D12Provider().GetDevice();
++  auto srv = [&](ID3D12Resource* resource, DXGI_FORMAT format, int index) {
++    D3D12_SHADER_RESOURCE_VIEW_DESC d{};
++    d.Format = format;
++    d.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
++    d.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
++    d.Texture2D.MipLevels = 1;
++    device->CreateShaderResourceView(resource, &d, handles[index].first);
++  };
++  auto uav = [&](ID3D12Resource* resource, DXGI_FORMAT format, int index) {
++    D3D12_UNORDERED_ACCESS_VIEW_DESC d{};
++    d.Format = format;
++    d.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
++    device->CreateUnorderedAccessView(resource, nullptr, &d,
++                                      handles[index].first);
++  };
++  srv(depth_.Get(), DXGI_FORMAT_R32_FLOAT, 0);
++  srv(color_.Get(), ui::d3d12::D3D12Presenter::kGuestOutputFormat, 1);
++  srv(history_[history_index_].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, 2);
++  auto next = history_index_ ^ 1;
++  uav(output, ui::d3d12::D3D12Presenter::kGuestOutputFormat, 3);
++  uav(history_[next].Get(), DXGI_FORMAT_R16G16B16A16_FLOAT, 4);
++  uav(motion_.Get(), DXGI_FORMAT_R16G16_FLOAT, 5);
++  auto& list = cp_.GetDeferredCommandList();
++  cp_.PushTransitionBarrier(
++      output, ui::d3d12::D3D12Presenter::kGuestOutputInternalState,
++      D3D12_RESOURCE_STATE_COPY_SOURCE);
++  cp_.SubmitBarriers();
++  list.D3DCopyResource(color_.Get(), output);
++  cp_.PushTransitionBarrier(color_.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
++                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++  cp_.PushTransitionBarrier(output, D3D12_RESOURCE_STATE_COPY_SOURCE,
++                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++  cp_.PushTransitionBarrier(history_[next].Get(),
++                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
++  cp_.PushUAVBarrier(motion_.Get());
++  list.D3DSetComputeRootSignature(root_.Get());
++  list.D3DSetComputeRootConstantBufferView(0, address);
++  for (int i = 0; i < 6; ++i)
++    list.D3DSetComputeRootDescriptorTable(i + 1, handles[i].second);
++  cp_.SetExternalPipeline(resolve_pipeline_.Get());
++  cp_.SubmitBarriers();
++  list.D3DDispatch((width + 7) / 8, (height + 7) / 8, 1);
++  cp_.PushTransitionBarrier(
++      output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++      ui::d3d12::D3D12Presenter::kGuestOutputInternalState);
++  cp_.PushTransitionBarrier(color_.Get(),
++                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
++                            D3D12_RESOURCE_STATE_COPY_DEST);
++  cp_.PushTransitionBarrier(history_[next].Get(),
++                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
++                            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
++  previous_frame_ = frame;
++  previous_matrix_ = matrix_;
++  history_index_ = next;
++}
++}  // namespace rex::graphics::d3d12

@@ -38,6 +38,12 @@ The current Windows regression suite passes 31 checks, including launcher prefer
 
 Native timing corrections now cover player step-down feedback, distant pedestrian movement/animation and background-car movement, all confirmed in hands-on testing. Background-car movement measures approximately 1.00x authored elapsed time versus 2.38x before correction. The corrections are enabled by default with native timing; `Play-Crackdown-Background-Cars.cmd` after `tools/build-physics-trace.ps1 -CarVariant` provides a separate diagnostic build. See the [physics investigation](docs/physics-investigation.md) and [fixed timing audit](docs/fixed-timing-audit.md) for evidence, opt-out flags and remaining issues.
 
+The `experimental/temporal-rendering` branch adds scene-depth extraction, camera
+motion visualization and a camera-only history preview. GPU checks pass on RTX
+and WARP; an automated garage run checks frame progress and bounded memory.
+See the [temporal rendering investigation](docs/temporal-rendering.md) for the
+separate build/launcher, remaining TAA work and the current DLSS 5 SDK barrier.
+
 The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
 
 Subsequent hands-on testing reported 5–10 minutes of stable city driving, enemy combat, vehicle collisions and jumping at about 29.8 average FPS, with working sound. Saving and reloading also worked in that session. These reports establish a successful gameplay session, not full campaign or long-term save validation; lighting, bloom and FXAA comparisons remain in progress.

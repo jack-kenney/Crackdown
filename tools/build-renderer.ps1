@@ -2,7 +2,7 @@ param(
     [string]$SdkPath = $env:REXGLUE_SDK_ROOT,
     [string]$SourcePath,
     [switch]$Baseline,
-    [ValidateSet('baseline', 'batched', 'ranges', 'constants', 'optimized', 'gpu', 'optimized-gpu', 'controls', 'stream', 'reuse', 'frontend', 'frontend-reuse')]
+    [ValidateSet('baseline', 'batched', 'ranges', 'constants', 'optimized', 'gpu', 'optimized-gpu', 'controls', 'stream', 'reuse', 'frontend', 'frontend-reuse', 'temporal')]
     [string]$Variant = 'batched',
     [switch]$PluginOnly,
     [ValidateRange(1, 64)][int]$Jobs = 4
@@ -26,12 +26,13 @@ if ((& git -C $SourcePath rev-parse HEAD) -ne $revision -or $LASTEXITCODE -ne 0)
     throw 'The renderer experiment requires the exact ReXGlue v0.10.0 source revision.'
 }
 $patchNames = @('type0-register-batching')
-$optimizedBase = $Variant -in @('optimized', 'optimized-gpu', 'controls', 'stream', 'reuse', 'frontend', 'frontend-reuse')
+$optimizedBase = $Variant -in @('optimized', 'optimized-gpu', 'controls', 'stream', 'reuse', 'frontend', 'frontend-reuse', 'temporal')
 if ($Variant -eq 'ranges' -or $optimizedBase) { $patchNames += 'single-range-allocation' }
 if ($Variant -eq 'constants' -or $optimizedBase) { $patchNames += 'constant-packing' }
-if ($Variant -in @('controls', 'frontend', 'frontend-reuse')) { $patchNames += 'control-register-batching' }
-if ($Variant -in @('stream', 'frontend', 'frontend-reuse')) { $patchNames += 'command-stream-reuse' }
+if ($Variant -in @('controls', 'frontend', 'frontend-reuse', 'temporal')) { $patchNames += 'control-register-batching' }
+if ($Variant -in @('stream', 'frontend', 'frontend-reuse', 'temporal')) { $patchNames += 'command-stream-reuse' }
 if ($Variant -in @('reuse', 'frontend-reuse')) { $patchNames += 'constant-reuse' }
+if ($Variant -eq 'temporal') { $patchNames += 'temporal-rendering' }
 $gpuTiming = $Variant -in @('gpu', 'optimized-gpu')
 if ($gpuTiming) { $patchNames += 'gpu-timing' }
 $patches = @($patchNames | ForEach-Object {
@@ -144,10 +145,16 @@ if ($gpuTiming) {
 }
 & cmake -S (Join-Path $PSScriptRoot 'renderer') -B $build -G Ninja `
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_PREFIX_PATH=$SdkPath" `
-    "-DREX_SOURCE=$stage" "-DCOMMAND_PROCESSOR_SOURCE=$commandProcessor" "-DRENDERER_GPU_TIMING=$timingOption"
+    "-DREX_SOURCE=$stage" "-DCOMMAND_PROCESSOR_SOURCE=$commandProcessor" "-DRENDERER_GPU_TIMING=$timingOption" "-DRENDERER_TEMPORAL=$(if ($Variant -eq 'temporal') { 'ON' } else { 'OFF' })"
 if ($LASTEXITCODE -ne 0) { throw 'Renderer configuration failed.' }
 & cmake --build $build --parallel $Jobs
 if ($LASTEXITCODE -ne 0) { throw 'Renderer build failed.' }
+if ($Variant -eq 'temporal') {
+    & (Join-Path $build 'temporal_gpu_test.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Temporal GPU checks failed.' }
+    & (Join-Path $build 'temporal_gpu_test.exe') --warp
+    if ($LASTEXITCODE -ne 0) { throw 'Temporal WARP checks failed.' }
+}
 if ($PluginOnly) {
     Write-Output (Join-Path $build 'rexgpu-xenos.dll')
     exit 0
