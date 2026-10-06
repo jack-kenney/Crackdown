@@ -5,6 +5,10 @@ extract a complete scene depth image, reconstruct camera motion and reproject
 previous color. This provides a concrete starting point for temporal rendering.
 The history mode is a research preview: moving characters, vehicles, particles,
 overlaid markers and the HUD still need separate treatment.
+`experimental/temporal-and-timing` combines this work with the separate opt-in
+[world object timing corrections](fixed-timing-audit.md#experimental-world-object-timing).
+Both sets of launchers are available there; the standard executable stays at
+its existing launcher path.
 
 ## DLSS 5 availability
 
@@ -113,11 +117,27 @@ progress and bounded memory in that scene, not image quality or a performance
 comparison. The local D3D12 debug layer is unavailable; debug-layer validation
 is not claimed.
 
+The combined branch also passed a two-minute history run with 13,600 submitted
+frames and 42.6 MiB peak additional private memory. A stricter subsequent pan
+check excludes unused camera-transform lanes, which contain changing scratch
+data, and confirms a rotation change in the nine XYZ components. After the
+remaining intel screens were dismissed, a further 30-second sample submitted
+3,492 frames with 1 MiB additional private memory and no backend errors.
+
 Raw local evidence stays under ignored `out/temporal/`, particularly
 `session-20261005-195807-3600` (assembled depth),
 `session-20261005-195939-5427` (motion visualization), and
 `session-20261005-202038-8082` (corrected history captures and `soak.csv`).
 DLL hashes accompany the recordings. Game images and assets are not committed.
+The combined run is `session-20261005-205212-8407`; the initial two-minute result
+is `out/temporal/combined-smoke-output.json` and the stricter later result is
+`out/temporal/combined-pan-verified.json`. The latter replaces the session's
+`smoke.json` / `soak.csv`; both result summaries remain available. Those rates
+are scene-specific frame submission counts, not a measured performance gain.
+A fresh depth-mode startup at `session-20261005-210224-7195` passed the final
+camera check after two dismissal attempts, then submitted 1,792 frames over
+15 seconds. Its final capture shows complete scene/player depth. This validates
+the updated startup path separately from the earlier memory-soak results.
 
 ## Build and try
 
@@ -151,9 +171,12 @@ python tools/temporal-smoke.py --session out/temporal/test-session.json --load -
 Replace the example profile source with an existing local profile. Automatic menu
 navigation expects its default campaign choices; it does not select arbitrary
 unlocked supply points. The sampler checks the loaded DLL hashes, sends bounded
-controller leases, captures guest output, checks frame progress and records
+controller leases, verifies that the main camera actually turns, captures guest
+output, checks frame progress and records
 private memory. The soak raises an error on upload/backend/device failures or
-more than 512 MiB additional private memory by default. Captures still need
+more than 512 MiB additional private memory by default. Initial intel playback
+may ignore Back; the load path retries its dismissal for up to 35 seconds and
+fails if the camera still cannot turn. Captures still need
 inspection: advancing frame counters alone cannot detect a black image.
 
 ## Remaining work, in order

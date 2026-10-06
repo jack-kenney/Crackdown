@@ -43,6 +43,12 @@ motion visualization and a camera-only history preview. GPU checks pass on RTX
 and WARP; an automated garage run checks frame progress and bounded memory.
 See the [temporal rendering investigation](docs/temporal-rendering.md) for the
 separate build/launcher, remaining TAA work and the current DLSS 5 SDK barrier.
+`experimental/temporal-and-timing` combines that renderer with opt-in lift-fade
+and Agency garage-door timer corrections from `experimental/world-object-timing`.
+Use `Play-Crackdown-Object-Timing.cmd` after
+`tools/build-physics-trace.ps1 -ObjectTimingVariant` for the isolated timing build.
+See the [object timing findings](docs/fixed-timing-audit.md#experimental-world-object-timing)
+for the tested half-second fade/five-second timeout and pending gameplay checks.
 
 The SDK upgrade passed ten regression checks; the benchmark tools add an eleventh check for route validation, replay timing, interruption cleanup and frame summaries. A fresh test profile reached the title, Campaign Solo, the opening movie and Agency garage gameplay at 2560x1440 with FXAA. Captures show the guest FPS overlay at 30 FPS. Movement, camera controls, jumping and repeated gunfire were exercised. Windows audio peaks remained nonzero in all 60 movie samples and all 200 gameplay samples (six and twenty seconds respectively). These are session-output checks, not a fresh end-to-end latency or synchronization measurement. The attached debugger reported no unhandled exception during the successful run.
 

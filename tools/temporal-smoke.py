@@ -3,6 +3,7 @@ import argparse
 import ctypes as C
 import csv
 import json
+import math
 import re
 import struct
 import time
@@ -16,6 +17,48 @@ class MemoryCounters(C.Structure):
         (name, C.c_size_t) for name in ('peak_working_set', 'working_set',
         'peak_paged', 'paged', 'peak_nonpaged', 'nonpaged', 'pagefile',
         'peak_pagefile', 'private')]
+
+
+def camera_orientation(probe):
+    manager = struct.unpack('>I', probe.read_guest(0x82DE2574, 4))[0]
+    camera = struct.unpack('>I', probe.read_guest(manager + 272, 4))[0] if manager else 0
+    if not camera or struct.unpack('>I', probe.read_guest(camera + 6500, 4))[0] != 3:
+        raise RuntimeError('A normal gameplay camera is required for the pan check')
+    # TU0 copies these three orientation rows into its render snapshot.
+    # Read only; do not confuse controller acknowledgement with camera response.
+    packed = struct.unpack('>12f', probe.read_guest(camera + 272, 48))
+    # These are three XYZ rows with unused fourth lanes. The unused lanes can
+    # contain changing scratch data and must never count as camera movement.
+    rows = tuple(packed[index] for index in (0, 1, 2, 4, 5, 6, 8, 9, 10))
+    if not all(math.isfinite(value) for value in rows):
+        raise RuntimeError('Invalid gameplay camera orientation')
+    return camera, rows
+
+
+def pan_check(controller, probe, directory, dismiss_intel):
+    deadline = time.monotonic() + (35 if dismiss_intel else 1)
+    attempts = 0
+    while True:
+        attempts += 1
+        camera, before = camera_orientation(probe)
+        sequence = controller.state(rx=28000, lease_ms=3000)
+        try:
+            time.sleep(1)
+            polled = controller.read_int(40) == sequence
+            after_camera, after = camera_orientation(probe)
+            delta = max(abs(a - b) for a, b in zip(before, after))
+            if polled and camera == after_camera and delta > 1e-4:
+                capture = str(controller.screenshot(directory / 'automation'))
+                return capture, dict(attempts=attempts, orientation_delta=delta,
+                                     controller_polled=True)
+        finally:
+            controller.state(lease_ms=0)
+        if not dismiss_intel or time.monotonic() >= deadline:
+            raise RuntimeError('Camera did not respond to input; dismiss menus/intel before sampling')
+        # Initial intel playback can ignore Back until its clip finishes. Try a
+        # bounded dismissal, then recheck actual camera response before soaking.
+        controller.press(BUTTONS['b'], .15)
+        time.sleep(1)
 
 
 def soak(probe, directory, duration, max_growth_mib):
@@ -115,17 +158,17 @@ def main():
             # Allow loading/intro to finish, then dismiss the initial intel panel.
             time.sleep(4)
             controller.press(BUTTONS['b'], .15)
+        pan = None
+        if args.pan or args.load:
+            capture, pan = pan_check(controller, probe, directory, args.load)
+            captures.append(capture)
+            controller.press(0, .5, rx=-28000)
         for _ in range(2):
             captures.append(str(controller.screenshot(directory / 'automation')))
             time.sleep(.5)
-        if args.pan:
-            # Capture during the input lease, before the camera stops turning.
-            controller.state(rx=14000, lease_ms=3000)
-            time.sleep(.15)
-            captures.append(str(controller.screenshot(directory / 'automation')))
-            controller.state(lease_ms=0)
-            controller.press(0, .4, rx=-14000)
         result = {'pid': pid, 'mode': session['Mode'], 'captures': captures, 'identity': probe.identity}
+        if pan:
+            result['camera_pan'] = pan
         if args.soak:
             result['soak'] = soak(probe, directory, args.soak, args.max_growth_mib)
             result['captures'].append(str(controller.screenshot(directory / 'automation')))
