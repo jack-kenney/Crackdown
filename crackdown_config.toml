@@ -401,3 +401,17 @@ registers = ["r4", "r11"]
 address = 0x82333388
 name = "CrackdownBackgroundCarAllocated"
 registers = ["r31"]
+
+# cLift preserves its update interval in f31. Normalize only its consumed fade
+# increment, after loading the authored constant and before either fade branch.
+[[entrypoint.midasm_hook]]
+address = 0x82531310
+name = "CrackdownLiftFadeStep"
+registers = ["f13", "f31"]
+
+# cAgencyGarageDoor's update wrapper retains incoming f1 across its base call.
+# Replace only the loaded increment immediately before the timer addition.
+[[entrypoint.midasm_hook]]
+address = 0x8252EDEC
+name = "CrackdownGarageDoorTimerStep"
+registers = ["f0"]

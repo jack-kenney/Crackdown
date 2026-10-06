@@ -35,10 +35,10 @@ examples show why replacing every matching number would break unrelated code.
 | Distant crowd movement | `82330B68`, `82342470` and `82338220` calculate object field +180 using walk speed times 1/30 or run speed times 1/15. `82331198` advances position +128 by a stored step vector +112 and decrements segment steps +176 once per call. | Native elapsed-time displacement and fractional reference-step countdown implemented. Generated-routine tests pass; human testing confirms normal crowd movement. |
 | Distant crowd animation | `82330888` advances phase +228 using multiplier +184 times `0.0333333`, then wraps against clip length and evaluates the animation. | Native elapsed-time interval implemented; original wrapping and LOD3/4/5 evaluation retained. Generated-routine tests pass; human testing confirms normal crowd animation. |
 | Background cars | `82333538` smooths direction by 10%, adds direction times authored step +116 and multiplier +120, and decrements segment steps +124 once per call. `82332EC8` invokes it before visibility classification. | Separate low-detail car pool confirmed. Native displacement/countdown/direction correction passes generated-routine tests; live movement is approximately 1.00x authored elapsed time versus 2.38x before. Human gameplay comparison reports good behavior. |
-| Object state timer | `8252EDA0` adds 1/30 to field +2404 each call before its state machine. | A real per-call time accumulator. Object role and call frequency remain unresolved; no demonstrated connection to interrupted Agency speech. |
+| Agency garage door timer | `cAgencyGarageDoor`, vtable `820C36F0`, update `8252EDA0`, adds 1/30 to field +2404. Consumer `8252F2E8` compares it with 5.0 and resets it for state zero or a player inside. | Opt-in elapsed-time correction on the object-timing experiment. Actual generated update/consumer tests verify the five-second timeout, state transitions and original resets. Human comparison pending. This timer is a door timeout, not a demonstrated speech timer. |
 | Character proxy timer | `822AB708` contains a branch adding 0.05 to a component field. | Audit the branch, field role and accumulated-time consumers. A fixed value here does not alone prove that it drives movement. |
 | Two related object state timers | `8259A738` and `8259AD98` add 0.05 to field +368 and compare it with another threshold. | Verify object identity and how often these states run. |
-| Object fade | `82531228` increments/decrements a value by 1/15 and copies it to four adjacent fields. | Likely a per-update fade; verify field meaning and visible duration. |
+| Lift model fade | `cLift`, vtable `820C43C8`, update `82531880`, retains elapsed f1 in f31 and calls `82531228`. That routine increments/decrements visual fields +124/+128/+132/+136 by 1/15, clamping to [0,1]. | Opt-in elapsed-time correction on the object-timing experiment. Actual generated fade tests preserve the half-second reference duration and transform calls. Human comparison pending; the garage smoke route did not invoke a lift with an attached visual. |
 | Input/movement response | `8228B0F0` applies a 1/30 proportional decay to field +6980 each call; `822A2C90` has another fixed-step response. | Inspect whether these are response coefficients, deadlines or calibrated geometry. Normalize only after identifying their elapsed-time behavior. |
 | Entity displacement/impulse candidate | `82354560` multiplies a scalar and a direction vector by 1/60 before virtual dispatch. | Identify the callback and receiving setter. An event invoked once per impact needs a different treatment from an update invoked every frame. |
 | Shared dt getter | `8254C568` has 73 direct caller functions and selects fixed or published clock-derived timing. | Existing native clock tests exercise the elapsed-time branch. Audit callers that assume the original reference interval separately. |
@@ -149,6 +149,61 @@ should include straight cruising, turns and the transition to nearby traffic.
 Normalizing direction response does not prove identical curved trajectories at
 every frame rate or validate every vehicle behavior.
 
+## Experimental world object timing
+
+The object-timing branch adds two narrow corrections, both disabled by default.
+They require native timing and explicit `--normalize_lift_fade=true` or
+`--normalize_garage_door_timer=true`. The consumed increments change; shared
+constant memory and the original state machines remain untouched.
+
+For `cLift`, the update retains its incoming elapsed seconds in nonvolatile f31
+before calling the transform/fade routine. The wrapper verifies the class and
+the known update return address, and the instruction hook at `82531310` consumes
+`2 * elapsed_seconds` instead of 1/15. The 30-update reference fade takes half a
+second; the uncorrected routine reaches its limit in 15 calls, or 125 ms at
+120 updates per second. Original transform getter/copy/set calls, four-channel
+writes and clamping remain in the generated routine.
+
+For `cAgencyGarageDoor`, the wrapper captures incoming f1 before the base object
+update can clobber that volatile register. The hook at `8252EDEC` consumes those
+elapsed seconds instead of 1/30. The original timeout consumer still compares
+field +2404 against 5.0, performs player proximity queries and resets the timer
+in the original states. At 120 updates per second the uncorrected five-second
+timer expires in about 1.25 seconds; the corrected timer expires after five
+elapsed seconds, within one update's floating-point/threshold boundary.
+
+Both hooks reject nonfinite, negative or greater-than-100-ms intervals,
+unrecognized classes and changed authored constants. Native timing disabled and
+explicit opt-out execute the original code. The integration fixtures execute
+the actual locally generated routines at 30/60/120/144/240 Hz and variable
+intervals. They compare complete PPC contexts and object/stack writes against
+the unhooked routines for pass-through cases, including bit-identical 30 Hz
+behavior. The door fixture also executes the real timeout consumer and state
+transitions; the lift fixture retains the three original transform boundaries.
+CSV tests check baseline/corrected arithmetic and the 8,192-row cap.
+
+Build and test without replacing the normal executable:
+
+```powershell
+./tools/build-physics-trace.ps1 -ObjectTimingVariant -Jobs 4
+./Play-Crackdown-Object-Timing.cmd -FrameRate 120
+./Play-Crackdown-Object-Timing.cmd -FrameRate 120 -Baseline
+```
+
+Each launch makes a fresh private copy of an existing save profile, excluding
+its cache. `-ProfileSource <directory>` selects the source explicitly. Logs and
+optional bounded `fade.csv` / `garage-door.csv` traces are under
+`out/object-timing/session-*`. `-FrameRate 0` selects original timing;
+`-PrintArguments` previews without starting the game or copying profiles.
+The traces include incoming elapsed seconds, before/after values and whether
+the consumed increment was actually replaced. A door reset can make its final
+after value zero even when the normalized increment executed. These experiments
+still need a visible lift and garage door comparison before promotion to main.
+An automated Agency gameplay smoke run did invoke the audited garage door:
+its incoming update intervals were typically 8–9 ms at 120 FPS, confirming
+seconds as the unit. Those samples remained in state zero, where the original
+consumer resets the timer; they do not validate the visible timeout duration.
+
 The SDK's UI has a 1/60 fallback only when no valid elapsed interval is available.
 Its normal ImGui delta uses elapsed time. Guest vblank uses the configured video
 mode refresh rate; that clock serves GPU interrupt/display behavior and should
@@ -210,7 +265,7 @@ clobbers, branch-dependent bases, retained nonvolatile bases and counters kept
 separate from timestep evidence. The audit adds no timing changes to the running
 game.
 
-All 31 regression tests passed, including the pedestrian and background-car
+At the original audit baseline, all 31 regression tests passed, including the pedestrian and background-car
 integration fixtures. The buffered trace test now retries missing
 records while rechecking complete contexts and guest memory on every attempt,
 respecting the producer's intentional nonblocking drops. Ten consecutive runs

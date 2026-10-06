@@ -76,6 +76,9 @@ void ResetSlot(uint32_t address) {
 void crackdown::SetCrowdNativeTiming(bool enabled) {
     native_enabled.store(enabled, std::memory_order_relaxed);
 }
+bool crackdown::NativeTimingActive() {
+    return native_enabled.load(std::memory_order_relaxed);
+}
 
 void CrackdownCrowdHooks::Advance(const PPCRegister& object, PPCVRegister& displacement) const {
     pending = {};
